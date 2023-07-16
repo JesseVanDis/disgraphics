@@ -26,6 +26,11 @@ int main()
 
 	std::vector<uint32_t> pixels((screen_width / scale) * (screen_height / scale), 0x0);
 
+	auto render_target = grh::create_render_target((screen_width / scale), (screen_height / scale));
+
+	std::vector<grh::tri> triangles;
+	triangles.push_back({{0,0,5}, {2,0,5}, {0,1,5}});
+
 	glfwMakeContextCurrent(window);
 	while (!glfwWindowShouldClose(window))
 	{
@@ -33,7 +38,11 @@ int main()
 		glClear(GL_COLOR_BUFFER_BIT);
 		glRasterPos2f(-1, -1);
 		glPixelZoom(scale, scale);
-		glDrawPixels((screen_width / scale), (screen_height / scale), GL_RGBA, GL_UNSIGNED_BYTE, pixels.data()); //draw pixel
+
+		auto camera = grh::lookat(grh::vec3{0,0,0}, grh::vec3{0,0,1}, grh::vec3{0,1,0}, 2.0f);
+		gr::render(render_target, triangles, camera);
+
+		glDrawPixels((screen_width / scale), (screen_height / scale), GL_RGBA, GL_UNSIGNED_BYTE, render_target.rgbd_buffer.get()); //draw pixel
 		glfwSwapBuffers(window);
 		glfwPollEvents();
 	}
