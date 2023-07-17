@@ -315,9 +315,9 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
         {
 			const float y_start_ceiled 			= std::ceil(p0.y);
 			const float height_ceiled 			= std::ceil(p1.y) - y_start_ceiled;
-			const float one_over_height_ceiled 	= 1.0f / height_ceiled;
+			const float one_over_height_ceiled 	= height_ceiled != 0.0f ? (1.0f / height_ceiled) : 0.0f;
 			const float sub_pixel 				= y_start_ceiled - p0.y;
-			assert(height_ceiled != 0.0f); // this is going to be a division over 0 ! // TODO: handle this to avoid NaN
+			//assert(height_ceiled != 0.0f); // this is going to be a division over 0 ! // TODO: handle this to avoid NaN
 
             line_it c {
                     .y_start    = static_cast<int>(y_start_ceiled),
@@ -374,6 +374,10 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 					ctx.px_x_from 	= static_cast<int>(line_it_long.x);
 					ctx.px_x_to 	= static_cast<int>(line_it_top.x);
 
+					assert(ctx.px_x_to 		>= ctx.px_x_from);
+					assert(ctx.px_y 		< ctx.buffer_height);
+					assert(ctx.px_x_from 	< ctx.buffer_width);
+					assert(ctx.px_x_to 		< ctx.buffer_width);
 					draw_hline_function(source_triangle, ctx);
 
 					++line_it_long;
@@ -386,6 +390,10 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 					ctx.px_x_from 	= static_cast<int>(line_it_long.x);
 					ctx.px_x_to 	= static_cast<int>(line_it_bot.x);
 
+					assert(ctx.px_x_to 		>= ctx.px_x_from);
+					assert(ctx.px_y 		< ctx.buffer_height);
+					assert(ctx.px_x_from 	< ctx.buffer_width);
+					assert(ctx.px_x_to 		< ctx.buffer_width);
 					draw_hline_function(source_triangle, ctx);
 
 					++line_it_long;
@@ -402,9 +410,13 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 				for(; y<line_it_long.y_start+line_it_top.height; y++)
 				{
 					ctx.px_y 		= y;
-					ctx.px_x_from 	= static_cast<int>(line_it_long.x);
-					ctx.px_x_to 	= static_cast<int>(line_it_top.x);
+					ctx.px_x_from 	= static_cast<int>(line_it_top.x);
+					ctx.px_x_to 	= static_cast<int>(line_it_long.x);
 
+					assert(ctx.px_x_to 		>= ctx.px_x_from);
+					assert(ctx.px_y 		< ctx.buffer_height);
+					assert(ctx.px_x_from 	< ctx.buffer_width);
+					assert(ctx.px_x_to 		< ctx.buffer_width);
 					draw_hline_function(source_triangle, ctx);
 
 					++line_it_long;
@@ -414,9 +426,13 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 				for(; y<line_it_long.y_start+line_it_long.height; y++)
 				{
 					ctx.px_y 		= y;
-					ctx.px_x_from 	= static_cast<int>(line_it_long.x);
-					ctx.px_x_to 	= static_cast<int>(line_it_bot.x);
+					ctx.px_x_from 	= static_cast<int>(line_it_bot.x);
+					ctx.px_x_to 	= static_cast<int>(line_it_long.x);
 
+					assert(ctx.px_x_to 		>= ctx.px_x_from);
+					assert(ctx.px_y 		< ctx.buffer_height);
+					assert(ctx.px_x_from 	< ctx.buffer_width);
+					assert(ctx.px_x_to 		< ctx.buffer_width);
 					draw_hline_function(source_triangle, ctx);
 
 					++line_it_long;
