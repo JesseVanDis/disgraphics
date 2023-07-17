@@ -29,7 +29,7 @@ int main()
 	auto render_target = grh::create_render_target((screen_width / scale), (screen_height / scale));
 
 	std::vector<grh::tri> triangles;
-	triangles.push_back({{0,0,5}, {2,0,5}, {0,1,5}});
+	triangles.push_back({{0,0,5}, {2,0.2f,5}, {0,1,5}});
 
 	glfwMakeContextCurrent(window);
 	while (!glfwWindowShouldClose(window))

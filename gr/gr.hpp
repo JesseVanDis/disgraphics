@@ -349,16 +349,20 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			int y, x_from, x_to;
 		};
 
-		inline void draw_hline_fill_0xff(render_target auto& target, const triangle auto& source_triangle, const draw_hline_ctx& ctx)
+		constexpr inline void draw_hline_fill_0xff(render_target auto& target, const triangle auto& source_triangle, const draw_hline_ctx& ctx)
 		{
+			assert(ctx.x_to >= ctx.x_from);
+			assert(ctx.y >= 0 		&& ctx.y 		< target.height);
+			assert(ctx.x_from >= 0 	&& ctx.x_from 	< target.width);
+			assert(ctx.x_to >= 0 	&& ctx.x_to 	< target.width);
 			std::span<uint32_t> target_data{target.data(), target.width * target.height};
 			auto begin = std::next(target_data.begin(), ctx.x_from + ctx.y * target.width);
 			auto end = std::next(begin, ctx.x_to - ctx.x_from);
-			std::generate(begin, end, 0xffffffff);
+			std::fill(begin, end, 0xffffffff);
 		}
 
 
-        void draw_triangle(render_target auto& target, const triangle auto& source_triangle, std::array<grh::vec3, 3>& pts)
+		constexpr void draw_triangle(render_target auto& target, const triangle auto& source_triangle, std::array<grh::vec3, 3>& pts)
 		{
             struct line {const grh::vec3& p0, &p1;};
 
@@ -375,7 +379,7 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 
             //typedef struct{int YStart, Height; float X, Xit, LYPerc, LYPercIt, R, Rit;}SLineIt;
 
-			if(cross_z < 0.0f)
+			if(cross_z > 0.0f)
 			{
 				line_it line_it_long = line_it_from_line(line_long.p0, line_long.p1);
 				line_it line_it_top  = line_it_from_line(line_top.p0, line_top.p1);
@@ -492,7 +496,7 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 
 		}
 
-		void render_rasterize(context& context, render_target auto& target, const triangle_list auto& triangles, const camera auto& camera)
+		constexpr void render_rasterize(context& context, render_target auto& target, const triangle_list auto& triangles, const camera auto& camera)
 		{
 			const float target_width_flt 	= static_cast<float>(target.width);  // NOLINT
 			const float target_height_flt 	= static_cast<float>(target.height); // NOLINT
