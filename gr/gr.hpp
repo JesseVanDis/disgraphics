@@ -34,17 +34,12 @@ namespace gr
 	template<typename T>
 	concept triangle_list = requires(T v)
 	{
-		{v.begin()};
-		{v.end()};
 		{*v.begin()} -> triangle;
 		{*v.end()} -> triangle;
 	};
 
-	template<typename T>
-	concept triangle_color = requires(T v)
-	{
-		{v.color} -> unsigned_int_32;
-	};
+	template<triangle_list T>
+	using triangle_from_list_t = decltype(*std::declval<T>().begin());
 
 	template<typename T>
 	concept camera = requires(T v)
@@ -56,69 +51,72 @@ namespace gr
 	};
 
 	template<typename T>
-	concept render_target = requires(T v)
+	concept draw_horizontal_line_ctx = requires(T v)
 	{
-		/// 32 byte aligned red,green,blue,depth
-		{v.data()} 			-> std::same_as<uint32_t*>;
-
-		{v.width} 			-> unsigned_integral;
-		{v.height} 			-> unsigned_integral;
+		{v.buffer_width} 	-> unsigned_integral;
+		{v.buffer_height} 	-> unsigned_integral;
+		{v.px_y} 			-> unsigned_integral;
+		{v.px_x_from} 		-> unsigned_integral;
+		{v.px_x_to} 		-> unsigned_integral;
 	};
-
-	namespace helpers
-	{
-		struct vec3
-		{
-			float x,y,z;
-		};
-
-		struct tri
-		{
-			vec3 p0, p1, p2;
-		};
-
-		struct cam
-		{
-			vec3 pos, lookat, up;
-			float fov;
-		};
-
-		struct managed_render_target
-		{
-			std::unique_ptr<uint32_t> 	rgbd_buffer;   // 32 byte aligned red,green,blue,depth
-			size_t						width;
-			size_t						height;
-
-			uint32_t*					data() { return rgbd_buffer.get(); } // NOLINT
-		};
-
-		inline managed_render_target 	create_render_target(size_t num_pixels_width, size_t num_pixels_height);
-		cam 							lookat(const vector3 auto& pos, const vector3 auto& lookat, const vector3 auto& up, const std::floating_point auto& fov = 2.0f);
-	}
-
-	namespace detail
-	{
-		struct impl;
-	}
-
-	struct context
-	{
-		~context();
-
-		std::unique_ptr<detail::impl> impl;
-	};
-
-	context			create_context();
-
-	void			clear(render_target auto& target);
-
-	void 			render(context& context, 	render_target auto& target, const triangle_list auto& triangles, const camera auto& camera);
-
-	/// for performance it is recommended to use a context if you are going to render multiple frames per second
-	void 			render(						render_target auto& target, const triangle_list auto& triangles, const camera auto& camera);
 }
 
+namespace gr::helpers
+{
+	struct vec3
+	{
+		float x,y,z;
+	};
+	static_assert(vector3<vec3>);
+
+	struct tri
+	{
+		vec3 p0, p1, p2;
+	};
+	static_assert(triangle<tri>);
+
+	struct cam
+	{
+		vec3 pos, lookat, up;
+		float fov;
+	};
+	static_assert(camera<cam>);
+}
 namespace grh = gr::helpers;
+
+namespace gr
+{
+
+	struct draw_hline_ctx
+	{
+		uint32_t buffer_width;
+		uint32_t buffer_height;
+		uint32_t px_y, px_x_from, px_x_to;
+	};
+
+	namespace detail::concepts
+	{
+		struct draw_horizontal_line_ctx_example
+		{
+			size_t buffer_width, buffer_height, px_y, px_x_from, px_x_to;
+		};
+		static_assert(draw_horizontal_line_ctx<draw_horizontal_line_ctx_example>);
+	}
+
+	template<typename FuncT, typename TriangleType>
+	concept draw_horizontal_line_function = requires(FuncT v)
+	{
+		{v(std::declval<TriangleType>(), std::declval<draw_hline_ctx>())};
+	};
+
+	template<triangle_list TriangleList>
+	constexpr void 	render(const TriangleList& triangles, const camera auto& camera, draw_horizontal_line_function<triangle_from_list_t<TriangleList>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height);
+}
+
+namespace gr::helpers
+{
+	constexpr cam					lookat(const vector3 auto& pos, const vector3 auto& lookat, const vector3 auto& up, const std::floating_point auto& fov = 2.0f);
+}
 
 
 // implementation
@@ -138,10 +136,7 @@ namespace gr
 			size_t					managed_depth_buffer_size = 0;
 		};
 	}
-
-	context::~context() = default;
-
-
+	
 	namespace detail
 	{
         struct line
@@ -300,15 +295,6 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 }
 
 #endif
-        void draw_triangle(render_target auto& target, const triangle auto& source_triangle, const line& line_long, const line& line_top, const line& line_bot)
-        {
-
-        }
-
-        inline float cross_z(float ax, float ay, float bx, float by)
-        {
-            return ax * by - bx * ay;
-        }
 
         struct line_it
         {
@@ -344,25 +330,20 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			return c;
 		}
 
-		struct draw_hline_ctx
+		constexpr inline void draw_hline_fill_0xff(const triangle auto& source_triangle, const draw_hline_ctx& ctx)
 		{
-			int y, x_from, x_to;
-		};
-
-		constexpr inline void draw_hline_fill_0xff(render_target auto& target, const triangle auto& source_triangle, const draw_hline_ctx& ctx)
-		{
-			assert(ctx.x_to >= ctx.x_from);
-			assert(ctx.y >= 0 		&& ctx.y 		< target.height);
-			assert(ctx.x_from >= 0 	&& ctx.x_from 	< target.width);
-			assert(ctx.x_to >= 0 	&& ctx.x_to 	< target.width);
-			std::span<uint32_t> target_data{target.data(), target.width * target.height};
-			auto begin = std::next(target_data.begin(), ctx.x_from + ctx.y * target.width);
-			auto end = std::next(begin, ctx.x_to - ctx.x_from);
-			std::fill(begin, end, 0xffffffff);
+			assert(ctx.px_x_to 		>= ctx.px_x_from);
+			assert(ctx.px_y 		< ctx.buffer_height);
+			assert(ctx.px_x_from 	< ctx.buffer_width);
+			assert(ctx.px_x_to 		< ctx.buffer_width);
+			//std::span<uint32_t> target_data{target.data(), ctx.buffer_width * ctx.buffer_height};
+			//auto begin = std::next(target_data.begin(), ctx.x_from + ctx.y * ctx.buffer_width);
+			//auto end = std::next(begin, ctx.x_to - ctx.x_from);
+			//std::fill(begin, end, 0xffffffff);
 		}
 
-
-		constexpr void draw_triangle(render_target auto& target, const triangle auto& source_triangle, std::array<grh::vec3, 3>& pts)
+		template<triangle TriangleType>
+		constexpr void draw_triangle(const TriangleType& source_triangle, std::array<grh::vec3, 3>& pts, draw_horizontal_line_function<TriangleType> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 		{
             struct line {const grh::vec3& p0, &p1;};
 
@@ -375,9 +356,10 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 
             // check whether the long line is on the left or right
             float cross_z = (pts[1].x - pts[0].x) * (pts[2].y - pts[0].y) - (pts[2].x - pts[0].x) * (pts[1].y - pts[0].y);
-            //int RemainingVertDirection = cross_z < 0.0f ? -1 : 1;
 
-            //typedef struct{int YStart, Height; float X, Xit, LYPerc, LYPercIt, R, Rit;}SLineIt;
+			draw_hline_ctx ctx; // NOLINT
+			ctx.buffer_width = static_cast<uint32_t>(frame_width);
+			ctx.buffer_height = static_cast<uint32_t>(frame_height);
 
 			if(cross_z > 0.0f)
 			{
@@ -388,11 +370,11 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 				int y=line_it_long.y_start;
 				for(; y<line_it_long.y_start+line_it_top.height; y++)
 				{
-					const int x_left  = static_cast<int>(line_it_long.x);
-					const int x_right = static_cast<int>(line_it_top.x);
+					ctx.px_y 		= y;
+					ctx.px_x_from 	= static_cast<int>(line_it_long.x);
+					ctx.px_x_to 	= static_cast<int>(line_it_top.x);
 
-					draw_hline_ctx ctx{y, x_left, x_right};
-					draw_hline_fill_0xff(target, source_triangle, ctx);
+					draw_hline_function(source_triangle, ctx);
 
 					++line_it_long;
 					++line_it_top;
@@ -400,11 +382,11 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 
 				for(; y<line_it_long.y_start+line_it_long.height; y++)
 				{
-					const int x_left  = static_cast<int>(line_it_long.x);
-					const int x_right = static_cast<int>(line_it_bot.x);
+					ctx.px_y 		= y;
+					ctx.px_x_from 	= static_cast<int>(line_it_long.x);
+					ctx.px_x_to 	= static_cast<int>(line_it_bot.x);
 
-					draw_hline_ctx ctx{y, x_left, x_right};
-					draw_hline_fill_0xff(target, source_triangle, ctx);
+					draw_hline_function(source_triangle, ctx);
 
 					++line_it_long;
 					++line_it_bot;
@@ -419,11 +401,11 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 				int y=line_it_long.y_start;
 				for(; y<line_it_long.y_start+line_it_top.height; y++)
 				{
-					const int x_right  = static_cast<int>(line_it_long.x);
-					const int x_left = static_cast<int>(line_it_top.x);
+					ctx.px_y 		= y;
+					ctx.px_x_from 	= static_cast<int>(line_it_long.x);
+					ctx.px_x_to 	= static_cast<int>(line_it_top.x);
 
-					draw_hline_ctx ctx{y, x_left, x_right};
-					draw_hline_fill_0xff(target, source_triangle, ctx);
+					draw_hline_function(source_triangle, ctx);
 
 					++line_it_long;
 					++line_it_top;
@@ -431,11 +413,11 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 
 				for(; y<line_it_long.y_start+line_it_long.height; y++)
 				{
-					const int x_right  = static_cast<int>(line_it_long.x);
-					const int x_left = static_cast<int>(line_it_bot.x);
+					ctx.px_y 		= y;
+					ctx.px_x_from 	= static_cast<int>(line_it_long.x);
+					ctx.px_x_to 	= static_cast<int>(line_it_bot.x);
 
-					draw_hline_ctx ctx{y, x_left, x_right};
-					draw_hline_fill_0xff(target, source_triangle, ctx);
+					draw_hline_function(source_triangle, ctx);
 
 					++line_it_long;
 					++line_it_bot;
@@ -474,6 +456,7 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 
 #endif
 
+#if 0
 			int p0_px_x_i = pts[0].x; // NOLINT
 			int p0_px_y_i = pts[0].y; // NOLINT
 			int p1_px_x_i = pts[1].x; // NOLINT
@@ -493,13 +476,14 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			{
 				target.data()[p2_px_x_i + p2_px_y_i * target.width] = 0xffffffff;
 			}
-
+#endif
 		}
 
-		constexpr void render_rasterize(context& context, render_target auto& target, const triangle_list auto& triangles, const camera auto& camera)
+		template<triangle_list TriangleList>
+		constexpr void render_rasterize(const TriangleList& triangles, const camera auto& camera, draw_horizontal_line_function<triangle_from_list_t<TriangleList>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 		{
-			const float target_width_flt 	= static_cast<float>(target.width);  // NOLINT
-			const float target_height_flt 	= static_cast<float>(target.height); // NOLINT
+			const float target_width_flt 	= static_cast<float>(frame_width);  // NOLINT
+			const float target_height_flt 	= static_cast<float>(frame_height); // NOLINT
 			const float aspect = target_width_flt / target_height_flt;
 			const glm::mat4x4 perspective 	= glm::perspectiveLH(camera.fov, aspect, 0.1f, 100.0f);
 			const glm::mat4x4 lookat 		= glm::lookAtLH(glm::vec3{camera.pos.x, camera.pos.y, camera.pos.z}, glm::vec3{camera.lookat.x, camera.lookat.y, camera.lookat.z}, glm::vec3{camera.up.x, camera.up.y, camera.up.z});
@@ -534,55 +518,21 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 
 				if(pts[0].z > 0.0f || pts[1].z > 0.0f || pts[2].z > 0.0f)
 				{
-					draw_triangle(target, tri, pts);
+					draw_triangle(tri, pts, draw_hline_function, frame_width, frame_height);
 				}
 			}
 		}
-
-		inline detail::impl& context_detail(gr::context& ctx)
-		{
-			if(ctx.impl == nullptr)
-			{
-				ctx.impl = std::make_unique<detail::impl>();
-			}
-			return *ctx.impl;
-		}
 	}
 
-	context create_context()
+	template<triangle_list TriangleList>
+	constexpr void 	render(const TriangleList& triangles, const camera auto& camera, draw_horizontal_line_function<triangle_from_list_t<TriangleList>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 	{
-		return context{};
-	}
-
-	void clear(render_target auto& target)
-	{
-		std::span<uint32_t> target_rgb(target.data(), target.width * target.height);
-		memset(target_rgb.data(), 0, target_rgb.size_bytes());
-	}
-
-	void render(context& context, render_target auto& target, const triangle_list auto& triangles, const camera auto& camera)
-	{
-		detail::render_rasterize(context, target, triangles, camera);
-	}
-
-	void render(render_target auto& target, const triangle_list auto& triangles, const camera auto& camera)
-	{
-		auto ctx = create_context();
-		render(ctx, target, triangles, camera);
+		detail::render_rasterize(triangles, camera, draw_hline_function, frame_width, frame_height);
 	}
 
 	namespace helpers
 	{
-		inline managed_render_target create_render_target(size_t num_pixels_width, size_t num_pixels_height)
-		{
-			managed_render_target target;
-			target.width = num_pixels_width;
-			target.height = num_pixels_height;
-			target.rgbd_buffer 	= std::unique_ptr<uint32_t>(new(std::align_val_t(32)) uint32_t[target.width * target.height]);
-			return target;
-		}
-
-		cam lookat(const vector3 auto& pos, const vector3 auto& lookat, const vector3 auto& up, const std::floating_point auto& fov)
+		constexpr cam lookat(const vector3 auto& pos, const vector3 auto& lookat, const vector3 auto& up, const std::floating_point auto& fov)
 		{
 			return cam{
 				.pos = {pos.x, pos.y, pos.z},
@@ -592,6 +542,47 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			};
 		}
 	}
+
+#if 0
+	namespace tests
+	{
+		struct test_draw
+		{
+			constexpr void operator()(const grh::tri& source_triangle, const gr::draw_hline_ctx& ctx)
+			{
+
+			}
+		};
+
+
+		constexpr inline void test_draw_func(const triangle auto& source_triangle, const draw_horizontal_line_ctx auto& ctx)
+		{
+		}
+
+		constexpr bool test()
+		{
+			auto camera 						= grh::lookat(grh::vec3{0,0,0}, grh::vec3{0,0,1}, grh::vec3{0,1,0}, 2.0f);
+			std::array<grh::tri, 1> triangles 	= {grh::tri{{0,0,5}, {2,1,5}, {0,2,5}}};
+
+			test_draw testdraw;
+
+			detail::render_rasterize(triangles, camera, testdraw, 100u, 100u);
+			return true;
+		}
+
+		//constexpr bool test()
+		//{
+		//	auto camera 						= grh::lookat(grh::vec3{0,0,0}, grh::vec3{0,0,1}, grh::vec3{0,1,0}, 2.0f);
+		//	std::array<grh::tri, 1> triangles 	= {grh::tri{{0,0,5}, {2,1,5}, {0,2,5}}};
+		//	test_draw testdraw;
+		//	detail::render_rasterize(triangles, camera, [](const grh::tri& source_triangle, const gr::draw_hline_ctx& ctx){}, 100u, 100u);
+		//	return true;
+		//}
+
+		static_assert(test());
+
+	}
+#endif
 }
 
 
