@@ -92,16 +92,8 @@ grh::cam cam::to_grh_cam()
 static void mouse_callback(GLFWwindow* window, const double xpos, const double ypos)
 {
 	static float s_sensitivity = 0.01f; // change this value to your liking
-	static bool s_first_mouse = true;
-	static double last_x = true;
-	static double last_y = true;
-
-	if (s_first_mouse)
-	{
-		last_x = xpos;
-		last_y = ypos;
-		s_first_mouse = false;
-	}
+	static double last_x = xpos;
+	static double last_y = ypos;
 
 	const double xoffset = (xpos - last_x) * s_sensitivity;
 	const double yoffset = (last_y - ypos) * s_sensitivity; // reversed since y-coordinates go from bottom to top

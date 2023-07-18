@@ -6,6 +6,10 @@ include(cmake/CPM.cmake)
 # glm
 CPMAddPackage("gh:g-truc/glm#0.9.9.8")
 
+# cgem
+CPMAddPackage("gh:kthohr/gcem@1.17.0")
+include_directories("${gcem_SOURCE_DIR}/include")
+
 # glfw
 CPMAddPackage(
         NAME glfw

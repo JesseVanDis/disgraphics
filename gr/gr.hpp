@@ -69,6 +69,11 @@ namespace gr::helpers
 	};
 	static_assert(vector3<vec3>);
 
+	struct vec4
+	{
+		float x,y,z,w;
+	};
+
 	struct tri
 	{
 		vec3 p0, p1, p2;
@@ -81,6 +86,8 @@ namespace gr::helpers
 		float fov;
 	};
 	static_assert(camera<cam>);
+
+	using mat4x4 = std::array<std::array<float, 4>, 4>;
 }
 namespace grh = gr::helpers;
 
@@ -124,6 +131,10 @@ namespace gr::helpers
 #include <algorithm>
 #include <glm/glm.hpp>
 #include <glm/ext.hpp>
+#if __has_include(<gcem.hpp>)
+#include <gcem.hpp>
+#define HAS_GCEM
+#endif
 
 
 namespace gr
@@ -495,26 +506,121 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 #endif
 		}
 
+		constexpr grh::mat4x4 create_perspective(float fovy, float aspect, float z_near, float z_far)
+		{
+			assert(std::abs(aspect - std::numeric_limits<float>::epsilon()) > 0.0f);
+
+			const float fovy_over_2 = fovy / 2.0f;
+
+#ifndef HAS_GCEM
+			const float tanHalfFovy = std::tan(fovy_over_2);
+#else
+
+			const float tanHalfFovy = std::is_constant_evaluated() ? gcem::tan(fovy_over_2) : std::tan(fovy_over_2);
+#endif
+
+			grh::mat4x4 result = {};
+			result[0][0] = 1.0f / (aspect * tanHalfFovy);
+			result[1][1] = 1.0f / (tanHalfFovy);
+			result[2][2] = (z_far + z_near) / (z_far - z_near);
+			result[2][3] = 1.0f;
+			result[3][2] = - (2.0f * z_far * z_near) / (z_far - z_near);
+			//result[3][3] = 1.0f; maybe ?
+			return result;
+		}
+
+		template<vector3 Vec3Type>
+		constexpr Vec3Type normalize(Vec3Type v)
+		{
+			const auto l = static_cast<std::decay_t<decltype(v.x)>>(1) / std::sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
+			return {v.x / l, v.y / l, v.z / l};
+		}
+
+		template<vector3 Vec3Type>
+		constexpr Vec3Type cross(const Vec3Type& a, const Vec3Type& b)
+		{
+			return {a.b * b.z - b.b * a.z, a.z * b.a - b.z * a.a, a.a * b.b - b.a * a.b};
+		}
+
+		template<vector3 Vec3Type>
+		constexpr Vec3Type sub(const Vec3Type& a, const Vec3Type& b)
+		{
+			return {a.x - b.x, a.y - b.y, a.z - b.z};
+		}
+
+		constexpr auto mul(const std::array<float, 4>& m1, const std::array<float, 4>& m2)
+		{
+
+		}
+
+		constexpr grh::mat4x4 mul(const grh::mat4x4& m1, const grh::mat4x4& m2)
+		{
+			grh::mat4x4 result;
+			for(size_t k=0; k<4; k++) for(size_t i=0; i<4; i++)
+			{
+				result[k][i] = m1[0][i] * m2[k][0] + m1[1][i] * m2[k][1] + m1[2][i] * m2[k][2] + m1[3][i] * m2[k][3];
+			}
+			return result;
+		}
+
+		constexpr grh::vec4 mul(const grh::mat4x4& m1, const grh::vec4& m2)
+		{
+			grh::vec4 result = {};
+			result.x = m1[0][0] * m2.x + m1[1][0] * m2.y + m1[2][0] * m2.z + m1[3][0] * m2.w;
+			result.y = m1[0][1] * m2.x + m1[1][1] * m2.y + m1[2][1] * m2.z + m1[3][1] * m2.w;
+			result.z = m1[0][2] * m2.x + m1[1][2] * m2.y + m1[2][2] * m2.z + m1[3][2] * m2.w;
+			result.w = m1[0][3] * m2.x + m1[1][3] * m2.y + m1[2][3] * m2.z + m1[3][3] * m2.w;
+			return result;
+		}
+
+		template<vector3 Vec3Type>
+		constexpr grh::mat4x4 create_lookat(const Vec3Type& eye, const Vec3Type& center, const Vec3Type& up)
+		{
+			const Vec3Type f(normalize(sub(center,eye)));
+			const Vec3Type s(normalize(cross(up, f)));
+			const Vec3Type u(cross(f, s));
+
+			grh::mat4x4 result = {};
+			result[0][0] = s.x;
+			result[1][0] = s.y;
+			result[2][0] = s.z;
+			result[0][1] = u.x;
+			result[1][1] = u.y;
+			result[2][1] = u.z;
+			result[0][2] = f.x;
+			result[1][2] = f.y;
+			result[2][2] = f.z;
+			result[3][0] = -dot(s, eye);
+			result[3][1] = -dot(u, eye);
+			result[3][2] = -dot(f, eye);
+			result[3][3] = 1.0f;
+			return result;
+		}
+
 		template<triangle_list TriangleList>
 		constexpr void render_rasterize(const TriangleList& triangles, const camera auto& camera, draw_horizontal_line_function<triangle_from_list_t<TriangleList>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 		{
 			const float target_width_flt 	= static_cast<float>(frame_width);  // NOLINT
 			const float target_height_flt 	= static_cast<float>(frame_height); // NOLINT
 			const float aspect = target_width_flt / target_height_flt;
-			const glm::mat4x4 perspective 	= glm::perspectiveLH(camera.fov, aspect, 0.1f, 100.0f);
-			const glm::mat4x4 lookat 		= glm::lookAtLH(glm::vec3{camera.pos.x, camera.pos.y, camera.pos.z}, glm::vec3{camera.lookat.x, camera.lookat.y, camera.lookat.z}, glm::vec3{camera.up.x, camera.up.y, camera.up.z});
 
-			const glm::mat4x4 projview = lookat * perspective;
+			//const glm::mat4x4 perspective 	= glm::perspectiveLH(camera.fov, aspect, 0.1f, 100.0f);
+			//const glm::mat4x4 lookat 		= glm::lookAtLH(glm::vec3{camera.pos.x, camera.pos.y, camera.pos.z}, glm::vec3{camera.lookat.x, camera.lookat.y, camera.lookat.z}, glm::vec3{camera.up.x, camera.up.y, camera.up.z});
+			//const glm::mat4x4 projview = lookat * perspective;
+
+			const grh::mat4x4 perspective 	= create_perspective(camera.fov, aspect, 0.1f, 100.0f);
+			const grh::mat4x4 lookat 		= create_lookat(glm::vec3{camera.pos.x, camera.pos.y, camera.pos.z}, glm::vec3{camera.lookat.x, camera.lookat.y, camera.lookat.z}, glm::vec3{camera.up.x, camera.up.y, camera.up.z});
+			const grh::mat4x4 projview 		= mul(lookat, perspective);
 
 			for(const triangle auto& tri : triangles)
 			{
-				const glm::vec4 p0 = {tri.p0.x, tri.p0.y, tri.p0.z, 1};
-				const glm::vec4 p1 = {tri.p1.x, tri.p1.y, tri.p1.z, 1};
-				const glm::vec4 p2 = {tri.p2.x, tri.p2.y, tri.p2.z, 1};
+				const grh::vec4 p0 = {tri.p0.x, tri.p0.y, tri.p0.z, 1};
+				const grh::vec4 p1 = {tri.p1.x, tri.p1.y, tri.p1.z, 1};
+				const grh::vec4 p2 = {tri.p2.x, tri.p2.y, tri.p2.z, 1};
 
-				const glm::vec4 p0_projview = projview * p0;
-				const glm::vec4 p1_projview = projview * p1;
-				const glm::vec4 p2_projview = projview * p2;
+				const grh::vec4 p0_projview = mul(projview, p0);
+				const grh::vec4 p1_projview = mul(projview, p1);
+				const grh::vec4 p2_projview = mul(projview, p2);
 
 				assert(p0_projview.w != 0.0f);
 
@@ -559,7 +665,7 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 		}
 	}
 
-#if 0
+#if 1
 	namespace tests
 	{
 		struct test_draw
@@ -595,7 +701,7 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 		//	return true;
 		//}
 
-		static_assert(test());
+		//static_assert(test());
 
 	}
 #endif
