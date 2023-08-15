@@ -9,11 +9,14 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
 static void mouse_button_callback(GLFWwindow* window, int button, int action, int mods);
 static void update_movement();
 
+static constexpr float s_deg_to_rad = 1.0f / 57.2958f;
+
 struct cam
 {
 	float 		pitch = 0;
 	float 		yaw = M_PI / 2.0f;
 	grh::vec3 	pos = {0,0,0};
+	float 		fov = 90.0f * s_deg_to_rad;
 
 	grh::cam to_grh_cam();
 };
@@ -62,11 +65,11 @@ int main()
 
 	std::vector<grh::tri> triangles;
 	//triangles.push_back({{0,0,5}, {2,0.2f,5}, {0,1,5}});
-	triangles.push_back({{0,0,5}, {2,0,5}, {1,1,5}});
+	triangles.push_back({{0,0,15}, {2,0,15}, {1,1,15}});
 	//triangles.push_back({{2,1,5}, {2,0.2f,5}, {0,1,5}});
 
-	s_camera.pitch = 0.840000f;
-	s_camera.yaw = 2.050796f;
+	//s_camera.pitch = 0.840000f;
+	//s_camera.yaw = 2.050796f;
 
 	//s_camera.pitch = 1.519999;
 	//s_camera.yaw = 1.710796;
@@ -109,7 +112,7 @@ grh::cam cam::to_grh_cam()
 			.pos = pos,
 			.lookat = {pos.x + front.x, pos.y + front.y, pos.z + front.z},
 			.up = {0,1,0},
-			.fov = 2.0f
+			.fov = fov
 	};
 }
 
@@ -166,9 +169,16 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
 
 static void update_movement()
 {
-	constexpr float speed = 0.01f;
+	constexpr float speed = 0.05f;
 	const grh::vec3 cam_dir = {std::cos(s_camera.yaw) * std::cos(s_camera.pitch), std::sin(s_camera.pitch), std::sin(s_camera.yaw) * std::cos(s_camera.pitch)};
-	const grh::vec3 cam_tan = {cam_dir.z, cam_dir.y, cam_dir.x};
+	grh::vec3 cam_tan = {-cam_dir.z, 0, cam_dir.x};
+	if(cam_tan.x != 0.0f && cam_tan.z != 0.0f)
+	{
+		const float l = std::sqrt(cam_tan.x*cam_tan.x + cam_tan.z*cam_tan.z);
+		cam_tan.x /= l;
+		cam_tan.y /= l;
+		cam_tan.z /= l;
+	}
 
 	if(s_pressed_up)
 	{
@@ -178,11 +188,11 @@ static void update_movement()
 	{
 		s_camera.pos = {s_camera.pos.x - cam_dir.x * speed,  s_camera.pos.y - cam_dir.y * speed,  s_camera.pos.z - cam_dir.z * speed};
 	}
-	if(s_pressed_left)
+	if(s_pressed_right)
 	{
 		s_camera.pos = {s_camera.pos.x - cam_tan.x * speed,  s_camera.pos.y - cam_tan.y * speed,  s_camera.pos.z - cam_tan.z * speed};
 	}
-	if(s_pressed_right)
+	if(s_pressed_left)
 	{
 		s_camera.pos = {s_camera.pos.x + cam_tan.x * speed,  s_camera.pos.y + cam_tan.y * speed,  s_camera.pos.z + cam_tan.z * speed};
 	}

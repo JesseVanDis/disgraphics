@@ -355,10 +355,29 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 
 		constexpr inline int y_pos_at_intersection(int current_ypos, const line_it& a, const line_it& b)
 		{
-			assert((b.x_it - a.x_it) != 0.0f);
+			if(b.x_it - a.x_it == 0.0f)
+			{
+				return (current_ypos-1);
+			}
+			//assert((b.x_it - a.x_it) != 0.0f);
 			int calculatedIterationsLeft = static_cast<int>(std::floor((a.x - b.x) / (b.x_it - a.x_it)));
 			int y_limit = current_ypos + calculatedIterationsLeft;
 			return y_limit;
+		}
+
+		inline constexpr void check_context_validity(draw_hline_ctx& ctx)
+		{
+#if 1
+			assert(ctx.px_x_to 		>= ctx.px_x_from);
+			assert(ctx.px_y 		< ctx.buffer_height);
+			assert(ctx.px_x_from 	< ctx.buffer_width);
+			assert(ctx.px_x_to 		< ctx.buffer_width);
+#else
+			ctx.px_x_to		= std::max(ctx.px_x_to, (ctx.px_x_from));
+			ctx.px_y 		= std::min(ctx.px_y, (ctx.buffer_height-1));
+			ctx.px_x_from 	= std::min(ctx.px_x_from, (ctx.buffer_width-1));
+			ctx.px_x_to 	= std::min(ctx.px_x_to, (ctx.buffer_width-1));
+#endif
 		}
 
 		template<triangle TriangleType>
@@ -393,10 +412,7 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 					ctx.px_x_from 	= static_cast<int>(line_it_long.x);
 					ctx.px_x_to 	= static_cast<int>(line_it_top.x);
 
-					assert(ctx.px_x_to 		>= ctx.px_x_from);
-					assert(ctx.px_y 		< ctx.buffer_height);
-					assert(ctx.px_x_from 	< ctx.buffer_width);
-					assert(ctx.px_x_to 		< ctx.buffer_width);
+					check_context_validity(ctx);
 					draw_hline_function(source_triangle, ctx);
 
 					++line_it_long;
@@ -410,10 +426,7 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 					ctx.px_x_from 	= static_cast<int>(line_it_long.x);
 					ctx.px_x_to 	= static_cast<int>(line_it_bot.x);
 
-					assert(ctx.px_x_to 		>= ctx.px_x_from);
-					assert(ctx.px_y 		< ctx.buffer_height);
-					assert(ctx.px_x_from 	< ctx.buffer_width);
-					assert(ctx.px_x_to 		< ctx.buffer_width);
+					check_context_validity(ctx);
 					draw_hline_function(source_triangle, ctx);
 
 					++line_it_long;
@@ -433,10 +446,7 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 					ctx.px_x_from 	= static_cast<int>(line_it_top.x);
 					ctx.px_x_to 	= static_cast<int>(line_it_long.x);
 
-					assert(ctx.px_x_to 		>= ctx.px_x_from);
-					assert(ctx.px_y 		< ctx.buffer_height);
-					assert(ctx.px_x_from 	< ctx.buffer_width);
-					assert(ctx.px_x_to 		< ctx.buffer_width);
+					check_context_validity(ctx);
 					draw_hline_function(source_triangle, ctx);
 
 					++line_it_long;
@@ -450,10 +460,7 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 					ctx.px_x_from 	= static_cast<int>(line_it_bot.x);
 					ctx.px_x_to 	= static_cast<int>(line_it_long.x);
 
-					assert(ctx.px_x_to 		>= ctx.px_x_from);
-					assert(ctx.px_y 		< ctx.buffer_height);
-					assert(ctx.px_x_from 	< ctx.buffer_width);
-					assert(ctx.px_x_to 		< ctx.buffer_width);
+					check_context_validity(ctx);
 					draw_hline_function(source_triangle, ctx);
 
 					++line_it_long;
@@ -558,10 +565,6 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			return {a.x - b.x, a.y - b.y, a.z - b.z};
 		}
 
-		//constexpr auto mul(const std::array<float, 4>& m1, const std::array<float, 4>& m2)
-		//{
-		//}
-
 		constexpr grh::mat4x4 mul(const grh::mat4x4& m1, const grh::mat4x4& m2)
 		{
 			grh::mat4x4 result;
@@ -613,13 +616,9 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			const float target_height_flt 	= static_cast<float>(frame_height); // NOLINT
 			const float aspect = target_width_flt / target_height_flt;
 
-			//const glm::mat4x4 perspective 	= glm::perspectiveLH(camera.fov, aspect, 0.1f, 100.0f);
-			//const glm::mat4x4 lookat 		= glm::lookAtLH(glm::vec3{camera.pos.x, camera.pos.y, camera.pos.z}, glm::vec3{camera.lookat.x, camera.lookat.y, camera.lookat.z}, glm::vec3{camera.up.x, camera.up.y, camera.up.z});
-			//const glm::mat4x4 projview = lookat * perspective;
-
 			const grh::mat4x4 perspective 	= create_perspective(camera.fov, aspect, 0.1f, 100.0f);
 			const grh::mat4x4 lookat 		= create_lookat(glm::vec3{camera.pos.x, camera.pos.y, camera.pos.z}, glm::vec3{camera.lookat.x, camera.lookat.y, camera.lookat.z}, glm::vec3{camera.up.x, camera.up.y, camera.up.z});
-			const grh::mat4x4 projview 		= mul(lookat, perspective);
+			const grh::mat4x4 projview 		= mul(perspective, lookat);
 
 			for(const triangle auto& tri : triangles)
 			{
@@ -633,7 +632,7 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 
 				assert(p0_projview.w != 0.0f);
 
-                std::array<grh::vec3, 3> pts; // NOLINT
+				std::array<grh::vec3, 3> pts; // NOLINT
 
 				pts[0].x = ((p0_projview.x / p0_projview.w) * 0.5f + 0.5f) * target_width_flt;
 				pts[0].y = ((p0_projview.y / p0_projview.w) * 0.5f + 0.5f) * target_height_flt;
