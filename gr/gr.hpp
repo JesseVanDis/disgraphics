@@ -353,6 +353,14 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			//std::fill(begin, end, 0xffffffff);
 		}
 
+		constexpr inline int y_pos_at_intersection(int current_ypos, const line_it& a, const line_it& b)
+		{
+			assert((b.x_it - a.x_it) != 0.0f);
+			int calculatedIterationsLeft = static_cast<int>(std::floor((a.x - b.x) / (b.x_it - a.x_it)));
+			int y_limit = current_ypos + calculatedIterationsLeft;
+			return y_limit;
+		}
+
 		template<triangle TriangleType>
 		constexpr void draw_triangle(const TriangleType& source_triangle, std::array<grh::vec3, 3>& pts, draw_horizontal_line_function<TriangleType> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 		{
@@ -395,7 +403,8 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 					++line_it_top;
 				}
 
-				for(; y<line_it_long.y_start+line_it_long.height; y++)
+				const int yLimit = y_pos_at_intersection(y, line_it_long, line_it_bot);
+				for(; y<yLimit; y++)
 				{
 					ctx.px_y 		= y;
 					ctx.px_x_from 	= static_cast<int>(line_it_long.x);
@@ -434,7 +443,8 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 					++line_it_top;
 				}
 
-				for(; y<line_it_long.y_start+line_it_long.height; y++)
+				const int yLimit = y_pos_at_intersection(y, line_it_long, line_it_bot);
+				for(; y<yLimit; y++)
 				{
 					ctx.px_y 		= y;
 					ctx.px_x_from 	= static_cast<int>(line_it_bot.x);
@@ -548,10 +558,9 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			return {a.x - b.x, a.y - b.y, a.z - b.z};
 		}
 
-		constexpr auto mul(const std::array<float, 4>& m1, const std::array<float, 4>& m2)
-		{
-
-		}
+		//constexpr auto mul(const std::array<float, 4>& m1, const std::array<float, 4>& m2)
+		//{
+		//}
 
 		constexpr grh::mat4x4 mul(const grh::mat4x4& m1, const grh::mat4x4& m2)
 		{
@@ -638,9 +647,15 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 				pts[2].y = ((p2_projview.y / p2_projview.w) * 0.5f + 0.5f) * target_height_flt;
 				pts[2].z = (p2_projview.z / p2_projview.w);
 
-				if(pts[0].z > 0.0f || pts[1].z > 0.0f || pts[2].z > 0.0f)
+				float cross_z = (pts[1].x - pts[0].x) * (pts[2].y - pts[0].y) - (pts[2].x - pts[0].x) * (pts[1].y - pts[0].y);
+				const bool backface_culling = cross_z > 0.0f;
+
+				if(backface_culling)
 				{
-					draw_triangle(tri, pts, draw_hline_function, frame_width, frame_height);
+					if(pts[0].z > 0.0f || pts[1].z > 0.0f || pts[2].z > 0.0f)
+					{
+						draw_triangle(tri, pts, draw_hline_function, frame_width, frame_height);
+					}
 				}
 			}
 		}
