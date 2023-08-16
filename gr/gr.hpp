@@ -600,9 +600,9 @@ static void clip(const Vec3& planePos, const Vec3& planeNormal, ViewSpaceFace bu
 			const grh::vec3& b = tri_in_out[1];
 			const grh::vec3& c = tri_in_out[2];
 
-			const grh::vec3 ab = {b.x - a.x, b.y - a.y, b.z - a.z};
-			const grh::vec3 bc = {c.x - b.x, c.y - b.y, c.z - b.z};
-			const grh::vec3 ca = {a.x - c.x, a.y - c.y, a.z - c.z};
+			const grh::vec3 ab = {b.x-a.x, b.y-a.y, b.z-a.z};
+			const grh::vec3 bc = {c.x-b.x, c.y-b.y, c.z-b.z};
+			const grh::vec3 ca = {a.x-c.x, a.y-c.y, a.z-c.z};
 
 			const float ab_len = std::sqrt(ab.x*ab.x + ab.y*ab.y + ab.z*ab.z);
 			const float bc_len = std::sqrt(bc.x*bc.x + bc.y*bc.y + bc.z*bc.z);
