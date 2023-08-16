@@ -89,7 +89,7 @@ int main()
 
 		//auto camera = grh::lookat(grh::vec3{0,0,0}, grh::vec3{0,0,1}, grh::vec3{0,1,0}, 2.0f);
 		memset(draw.pixels.data(), 0, draw.pixels.size() * sizeof(draw.pixels[0]));
-		printf("%f, %f\n", s_camera.pitch, s_camera.yaw);
+		//printf("%f, %f\n", s_camera.pitch, s_camera.yaw);
 
 		gr::render(triangles, s_camera.to_grh_cam(), draw, screen_width / scale, screen_height / scale);
 

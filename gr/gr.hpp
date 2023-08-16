@@ -644,6 +644,12 @@ static void clip(const Vec3& planePos, const Vec3& planeNormal, ViewSpaceFace bu
 			return Vec3Type{a.x * b, a.y * b, a.z * b};
 		}
 
+		template<vector3 Vec3Type>
+		constexpr floating_point auto dot(const Vec3Type& a, const Vec3Type& b)
+		{
+			return a.x * b.x + a.y * b.y + a.z * b.z;
+		}
+
 		constexpr grh::mat4x4 mul(const grh::mat4x4& m1, const grh::mat4x4& m2)
 		{
 			grh::mat4x4 result;
@@ -695,7 +701,7 @@ static void clip(const Vec3& planePos, const Vec3& planeNormal, ViewSpaceFace bu
 			return static_cast<decltype(denom)>(-1.0f);
 		}
 
-		constexpr bool clip_triangle(const vector3 auto& plane_pos, const vector3 auto& plane_normal, triangle auto& tri_in_out, triangle auto& tri_extra_out)
+		constexpr int clip_triangle(const vector3 auto& plane_pos, const vector3 auto& plane_normal, triangle auto& tri_in_out, triangle auto& tri_extra_out)
 		{
 			const vector3 auto& a = get_tri_p0(tri_in_out);
 			const vector3 auto& b = get_tri_p1(tri_in_out);
@@ -768,11 +774,14 @@ static void clip(const Vec3& planePos, const Vec3& planeNormal, ViewSpaceFace bu
 					get_tri_p0(tri_extra_out) = points[indices.indices[((1<<1u)+0u)&0b11u]];
 					get_tri_p1(tri_extra_out) = points[indices.indices[((1<<1u)+1u)&0b11u]];
 					get_tri_p2(tri_extra_out) = points[indices.indices[((1<<1u)+2u)&0b11u]];
-					return true;
+					return 1;
 				}
 			}
-
-			return false;
+			else
+			{
+				return dot(sub(c, plane_pos), plane_normal) > 0 ? 0 : -1;
+			}
+			return 0;
 		}
 
 		template<triangle TriangleType>
@@ -956,10 +965,10 @@ static void clip(const Vec3& planePos, const Vec3& planeNormal, ViewSpaceFace bu
 			const float target_height_flt 	= static_cast<float>(frame_height); // NOLINT
 			const float aspect = target_width_flt / target_height_flt;
 
-			const float near_plane 	= 1.1f;
+			const float near_plane 	= 0.1f;
 			const float far_plane 	= 100.0f;
 
-			const grh::mat4x4 perspective 	= create_perspective(camera.fov, aspect, near_plane, far_plane);
+			const grh::mat4x4 perspective 	= create_perspective(camera.fov, aspect, near_plane / 10.0f, far_plane);
 			const grh::mat4x4 lookat 		= create_lookat(glm::vec3{camera.pos.x, camera.pos.y, camera.pos.z}, glm::vec3{camera.lookat.x, camera.lookat.y, camera.lookat.z}, glm::vec3{camera.up.x, camera.up.y, camera.up.z});
 			const grh::mat4x4 projview 		= mul(perspective, lookat);
 
@@ -1005,6 +1014,8 @@ static void clip(const Vec3& planePos, const Vec3& planeNormal, ViewSpaceFace bu
 					//float cross_z = (pts[1].x - pts[0].x) * (pts[2].y - pts[0].y) - (pts[2].x - pts[0].x) * (pts[1].y - pts[0].y);
 					//const bool backface_culling = cross_z > 0.0f;
 
+					printf("%f, %f, %f | ", pts[0].z, pts[1].z, pts[2].z);
+
 					//if(backface_culling)
 					//{
 						if(pts[0].z > 0.0f || pts[1].z > 0.0f || pts[2].z > 0.0f)
@@ -1015,6 +1026,7 @@ static void clip(const Vec3& planePos, const Vec3& planeNormal, ViewSpaceFace bu
 				}
 
 			}
+			printf("\n");
 		}
 	}
 
