@@ -18,6 +18,13 @@ namespace gr
 	concept unsigned_int_32 = std::same_as<uint32_t, std::decay_t<T>>;
 
 	template<typename T>
+	concept vector2 = requires(T v)
+	{
+		{v.x} -> floating_point;
+		{v.y} -> floating_point;
+	};
+
+	template<typename T>
 	concept vector3 = requires(T v)
 	{
 		{v.x} -> floating_point;
@@ -76,6 +83,12 @@ namespace gr
 
 namespace gr::helpers
 {
+	struct vec2
+	{
+		float x,y;
+	};
+	static_assert(vector2<vec2>);
+
 	struct vec3
 	{
 		float x,y,z;
@@ -111,7 +124,7 @@ namespace gr
 	{
 		uint32_t buffer_width;
 		uint32_t buffer_height;
-		uint32_t px_y, px_x_from, px_x_to;
+		uint32_t px_y, px_x_from, line_length_px;
 	};
 
 	namespace detail::concepts
@@ -128,6 +141,9 @@ namespace gr
 	{
 		{v(std::declval<TriangleType>(), std::declval<draw_hline_ctx>())};
 	};
+
+	template<typename IteratorCollection, triangle_list TriangleList>
+	constexpr void 	render(const TriangleList& triangles, const camera auto& camera, draw_horizontal_line_function<triangle_from_list_t<TriangleList>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height);
 
 	template<triangle_list TriangleList>
 	constexpr void 	render(const TriangleList& triangles, const camera auto& camera, draw_horizontal_line_function<triangle_from_list_t<TriangleList>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height);
@@ -318,22 +334,55 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 
 #endif
 
+		template<typename ...Iterators>
+		struct iterator_list
+		{
+		};
+
+		struct iterator_collection
+		{
+			//void init(const vector3 auto& p0, const vector3 auto& p1, float one_over_height_ceiled)
+			//{
+			//
+			//}
+
+			template<typename Cb>
+			void for_each(Cb cb)
+			{
+
+			}
+		};
+
+		struct z_iterator
+		{
+			explicit z_iterator(const vector3 auto& v) : value(v.z){}
+			float value;
+		};
+
+		template<typename IteratorCollection>
         struct line_it
         {
-            int y_start, height;
+			int y_start, height;
 
 			float x_it, x;
 			float z_it, z;
+
+			IteratorCollection iterator_collection;
 
 			line_it& operator ++()
 			{
 				x += x_it;
 				z += z_it;
+				iterator_collection.for_each([&](auto& v) { v.value += v.value_it; });
 				return *this;
 			}
         };
 
-        line_it line_it_from_line(const vector3 auto& p0, const vector3 auto& p1)
+		template<typename VecA, typename VecB>
+		using smallest_vec3_t = std::conditional_t<sizeof(VecA) < sizeof(VecB), VecA, VecB>;
+
+		template<typename IteratorCollection>
+		line_it<IteratorCollection> line_it_from_line(const vector3 auto& p0, const vector3 auto& p1)
         {
 			const float y_start_ceiled 			= std::ceil(p0.y);
 			const float height_ceiled 			= std::ceil(p1.y) - y_start_ceiled;
@@ -341,7 +390,7 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			const float sub_pixel 				= y_start_ceiled - p0.y;
 			//assert(height_ceiled != 0.0f); // this is going to be a division over 0 ! // TODO: handle this to avoid NaN
 
-            line_it c {
+            line_it<IteratorCollection> c {
                     .y_start    = static_cast<int>(y_start_ceiled),
                     .height     = static_cast<int>(height_ceiled),
 					.x_it 		= (p1.x - p0.x) * one_over_height_ceiled,
@@ -349,22 +398,18 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 					.z_it 		= (p1.z - p0.z) * one_over_height_ceiled,
 					.z			= p0.z + (c.z_it * sub_pixel)
 			};
+
+			c.iterator_collection.for_each([&](auto& v)
+			{
+				v.value_it 	= (v.field(p1) - v.field(p0)) * one_over_height_ceiled;
+				v.value		= v.field(p0) + (v.value_it * sub_pixel);
+			});
+
 			return c;
 		}
 
-		constexpr inline void draw_hline_fill_0xff(const triangle auto& source_triangle, const draw_hline_ctx& ctx)
-		{
-			assert(ctx.px_x_to 		>= ctx.px_x_from);
-			assert(ctx.px_y 		< ctx.buffer_height);
-			assert(ctx.px_x_from 	< ctx.buffer_width);
-			assert(ctx.px_x_to 		< ctx.buffer_width);
-			//std::span<uint32_t> target_data{target.data(), ctx.buffer_width * ctx.buffer_height};
-			//auto begin = std::next(target_data.begin(), ctx.x_from + ctx.y * ctx.buffer_width);
-			//auto end = std::next(begin, ctx.x_to - ctx.x_from);
-			//std::fill(begin, end, 0xffffffff);
-		}
-
-		constexpr inline int y_pos_at_intersection(int current_ypos, const line_it& a, const line_it& b)
+		template<typename IteratorCollection>
+		constexpr inline int y_pos_at_intersection(int current_ypos, const line_it<IteratorCollection>& a, const line_it<IteratorCollection>& b)
 		{
 			if(b.x_it - a.x_it == 0.0f)
 			{
@@ -380,20 +425,20 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 		inline constexpr void check_context_validity(draw_hline_ctx& ctx)
 		{
 #if 0
-			assert(ctx.px_x_to 		>= ctx.px_x_from);
+			int to = ctx.px_x_from + ctx.line_length_px;
+			assert(to 				>= ctx.px_x_from);
 			assert(ctx.px_y 		< ctx.buffer_height);
 			assert(ctx.px_x_from 	< ctx.buffer_width);
 			assert(ctx.px_x_to 		< ctx.buffer_width);
 #else
-			ctx.px_x_to		= std::max(ctx.px_x_to, (ctx.px_x_from));
-			ctx.px_y 		= std::min(ctx.px_y, (ctx.buffer_height-1));
-			ctx.px_x_from 	= std::min(ctx.px_x_from, (ctx.buffer_width-1));
-			ctx.px_x_to 	= std::min(ctx.px_x_to, (ctx.buffer_width-1));
+			ctx.px_y 			= std::min(ctx.px_y, (ctx.buffer_height-1));
+			ctx.px_x_from 		= std::min(ctx.px_x_from, (ctx.buffer_width-1));
+			ctx.line_length_px 	= (ctx.px_x_from + ctx.line_length_px) > (ctx.buffer_width-1) ? ((ctx.buffer_width-1) - ctx.px_x_from) : ctx.line_length_px;
 #endif
 		}
 
 		/// no bounds checking here!
-		template<triangle TriangleType>
+		template<typename IteratorCollection, triangle TriangleType>
 		constexpr void draw_triangle_unsafe(const TriangleType& source_triangle, std::array<grh::vec3, 3>& pts_screen_space, draw_horizontal_line_function<TriangleType> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 		{
             struct line {const grh::vec3& p0, &p1;};
@@ -414,16 +459,16 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 
 			if(cross_z > 0.0f)
 			{
-				line_it line_it_long = line_it_from_line(line_long.p0, line_long.p1);
-				line_it line_it_top  = line_it_from_line(line_top.p0, line_top.p1);
-				line_it line_it_bot  = line_it_from_line(line_bot.p0, line_bot.p1);
+				line_it<IteratorCollection> line_it_long = line_it_from_line<IteratorCollection>(line_long.p0, line_long.p1);
+				line_it<IteratorCollection> line_it_top  = line_it_from_line<IteratorCollection>(line_top.p0, line_top.p1);
+				line_it<IteratorCollection> line_it_bot  = line_it_from_line<IteratorCollection>(line_bot.p0, line_bot.p1);
 
 				int y=line_it_long.y_start;
 				for(; y<line_it_long.y_start+line_it_top.height; y++)
 				{
-					ctx.px_y 		= y;
-					ctx.px_x_from 	= static_cast<int>(line_it_long.x);
-					ctx.px_x_to 	= static_cast<int>(line_it_top.x);
+					ctx.px_y 			= y;
+					ctx.px_x_from 		= static_cast<int>(line_it_long.x);
+					ctx.line_length_px 	= static_cast<int>(line_it_top.x) - ctx.px_x_from;
 
 					check_context_validity(ctx);
 					draw_hline_function(source_triangle, ctx);
@@ -435,9 +480,9 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 				const int yLimit = y_pos_at_intersection(y, line_it_long, line_it_bot);
 				for(; y<yLimit; y++)
 				{
-					ctx.px_y 		= y;
-					ctx.px_x_from 	= static_cast<int>(line_it_long.x);
-					ctx.px_x_to 	= static_cast<int>(line_it_bot.x);
+					ctx.px_y 			= y;
+					ctx.px_x_from 		= static_cast<int>(line_it_long.x);
+					ctx.line_length_px 	= static_cast<int>(line_it_bot.x) - ctx.px_x_from;
 
 					check_context_validity(ctx);
 					draw_hline_function(source_triangle, ctx);
@@ -448,16 +493,16 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			}
 			else
 			{
-				line_it line_it_long = line_it_from_line(line_long.p0, line_long.p1);
-				line_it line_it_top  = line_it_from_line(line_top.p0, line_top.p1);
-				line_it line_it_bot  = line_it_from_line(line_bot.p0, line_bot.p1);
+				line_it line_it_long = line_it_from_line<IteratorCollection>(line_long.p0, line_long.p1);
+				line_it line_it_top  = line_it_from_line<IteratorCollection>(line_top.p0, line_top.p1);
+				line_it line_it_bot  = line_it_from_line<IteratorCollection>(line_bot.p0, line_bot.p1);
 
 				int y=line_it_long.y_start;
 				for(; y<line_it_long.y_start+line_it_top.height; y++)
 				{
-					ctx.px_y 		= y;
-					ctx.px_x_from 	= static_cast<int>(line_it_top.x);
-					ctx.px_x_to 	= static_cast<int>(line_it_long.x);
+					ctx.px_y 			= y;
+					ctx.px_x_from 		= static_cast<int>(line_it_top.x);
+					ctx.line_length_px 	= static_cast<int>(line_it_long.x) - ctx.px_x_from;
 
 					check_context_validity(ctx);
 					draw_hline_function(source_triangle, ctx);
@@ -469,9 +514,9 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 				const int yLimit = y_pos_at_intersection(y, line_it_long, line_it_bot);
 				for(; y<yLimit; y++)
 				{
-					ctx.px_y 		= y;
-					ctx.px_x_from 	= static_cast<int>(line_it_bot.x);
-					ctx.px_x_to 	= static_cast<int>(line_it_long.x);
+					ctx.px_y 			= y;
+					ctx.px_x_from 		= static_cast<int>(line_it_bot.x);
+					ctx.line_length_px	= static_cast<int>(line_it_long.x) - ctx.px_x_from;
 
 					check_context_validity(ctx);
 					draw_hline_function(source_triangle, ctx);
@@ -503,40 +548,38 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			return std::sqrt(vec.x*vec.x + vec.y*vec.y + vec.z*vec.z);
 		}
 
-		template<vector3 Vec3Type>
-		constexpr Vec3Type cross(const Vec3Type& a, const Vec3Type& b)
+		constexpr grh::vec3 cross_xyz(const vector3 auto& a, const vector3 auto& b)
 		{
 			return {a.b * b.z - b.b * a.z, a.z * b.a - b.z * a.a, a.a * b.b - b.a * a.b};
 		}
 
-		template<vector3 Vec3Type>
-		constexpr Vec3Type sub(const Vec3Type& a, const Vec3Type& b)
+		constexpr floating_point auto dot_xyz(const vector3 auto& a, const vector3 auto& b)
+		{
+			return a.x * b.x + a.y * b.y + a.z * b.z;
+		}
+
+		template<vector3 Vec3AT, vector3 Vec3BT>
+		constexpr smallest_vec3_t<Vec3AT, Vec3BT> sub_xyz(const Vec3AT& a, const Vec3BT& b)
 		{
 			return {a.x - b.x, a.y - b.y, a.z - b.z};
 		}
 
-		template<vector3 Vec3Type>
-		constexpr Vec3Type add(const Vec3Type& a, const Vec3Type& b)
+		template<vector3 Vec3AT, vector3 Vec3BT>
+		constexpr smallest_vec3_t<Vec3AT, Vec3BT> add_xyz(const Vec3AT& a, const Vec3BT& b)
 		{
 			return {a.x + b.x, a.y + b.y, a.z + b.z};
 		}
 
-		template<vector3 Vec3Type>
-		constexpr Vec3Type mul(const Vec3Type& a, const Vec3Type& b)
+		template<vector3 Vec3AT, vector3 Vec3BT>
+		constexpr smallest_vec3_t<Vec3AT, Vec3BT> mul_xyz(const Vec3AT& a, const Vec3BT& b)
 		{
-			return Vec3Type{a.x * b.x, a.y * b.y, a.z * b.z};
+			return {a.x * b.x, a.y * b.y, a.z * b.z};
 		}
 
-		template<vector3 Vec3Type>
-		constexpr Vec3Type mul(const Vec3Type& a, const decltype(Vec3Type::x)& b)
+		template<vector3 Vec3T>
+		constexpr Vec3T mul_xyz(const Vec3T& a, float b)
 		{
-			return Vec3Type{a.x * b, a.y * b, a.z * b};
-		}
-
-		template<vector3 Vec3Type>
-		constexpr floating_point auto dot(const Vec3Type& a, const Vec3Type& b)
-		{
-			return a.x * b.x + a.y * b.y + a.z * b.z;
+			return {a.x * b, a.y * b, a.z * b};
 		}
 
 		constexpr grh::mat4x4 mul(const grh::mat4x4& m1, const grh::mat4x4& m2)
@@ -583,8 +626,8 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			const floating_point auto denom = (plane_normal.x * ray_dir.x) + (plane_normal.y * ray_dir.y) + (plane_normal.z * ray_dir.z);
 			if ((denom*denom) > static_cast<decltype(denom)>(0.0001 * 0.0001)) // your favorite epsilon
 			{
-				const vector3 auto 			d = sub(plane_pos, ray_origin);
-				const floating_point auto 	d_dot = (d.x * plane_normal.x) + (d.y * plane_normal.y) + (d.z * plane_normal.z);
+				const vector3 auto 			d = sub_xyz(plane_pos, ray_origin);
+				const floating_point auto 	d_dot = dot_xyz(d, plane_normal);
 				return d_dot / denom;
 			}
 			return static_cast<decltype(denom)>(-1.0f);
@@ -596,9 +639,9 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			const vector3 auto& b = get_tri_p1(tri_in_out);
 			const vector3 auto& c = get_tri_p2(tri_in_out);
 
-			const vector3 auto ab = sub(b, a);
-			const vector3 auto bc = sub(c, b);
-			const vector3 auto ca = sub(a, c);
+			const vector3 auto ab = sub_xyz(b, a);
+			const vector3 auto bc = sub_xyz(c, b);
+			const vector3 auto ca = sub_xyz(a, c);
 
 			const floating_point auto ab_len = length(ab);
 			const floating_point auto bc_len = length(bc);
@@ -608,9 +651,9 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			const floating_point auto bc_len_inv = 1.0f / bc_len;
 			const floating_point auto ca_len_inv = 1.0f / ca_len;
 
-			const vector3 auto ab_dir = mul(ab, ab_len_inv); // TODO: This can be precalculated
-			const vector3 auto bc_dir = mul(bc, bc_len_inv); // TODO: This can be precalculated
-			const vector3 auto ca_dir = mul(ca, ca_len_inv); // TODO: This can be precalculated
+			const vector3 auto ab_dir = mul_xyz(ab, ab_len_inv); // TODO: This can be precalculated
+			const vector3 auto bc_dir = mul_xyz(bc, bc_len_inv); // TODO: This can be precalculated
+			const vector3 auto ca_dir = mul_xyz(ca, ca_len_inv); // TODO: This can be precalculated
 
 			const floating_point auto a_to_b_t = intersect(a, ab_dir, plane_pos, plane_normal);
 			const floating_point auto b_to_c_t = intersect(b, bc_dir, plane_pos, plane_normal);
@@ -620,16 +663,16 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			const bool intersects_b_to_c = (b_to_c_t > 0 && b_to_c_t < bc_len);
 			const bool intersects_c_to_a = (c_to_a_t > 0 && c_to_a_t < ca_len);
 
-			const vector3 auto intersection_a_to_b = add(a, mul(ab_dir, a_to_b_t));
-			const vector3 auto intersection_b_to_c = add(b, mul(bc_dir, b_to_c_t));
-			const vector3 auto intersection_c_to_a = add(c, mul(ca_dir, c_to_a_t));
+			const vector3 auto intersection_a_to_b = add_xyz(a, mul_xyz(ab_dir, a_to_b_t));
+			const vector3 auto intersection_b_to_c = add_xyz(b, mul_xyz(bc_dir, b_to_c_t));
+			const vector3 auto intersection_c_to_a = add_xyz(c, mul_xyz(ca_dir, c_to_a_t));
 
 			const vector3 auto& triangle_tip  = (intersects_a_to_b && intersects_c_to_a) ? a : ((intersects_a_to_b && intersects_b_to_c) ? b : c);
 			const vector3 auto& any_other_tip = (intersects_a_to_b && intersects_c_to_a) ? b : ((intersects_a_to_b && intersects_b_to_c) ? c : a);
 
 			if(intersects_a_to_b || intersects_b_to_c || intersects_c_to_a)
 			{
-				const vector3 auto	tip_to_tip			= sub(triangle_tip, any_other_tip);
+				const vector3 auto	tip_to_tip			= sub_xyz(triangle_tip, any_other_tip);
 				const bool 			should_cut_to_quad 	= (tip_to_tip.x*plane_normal.x + tip_to_tip.y*plane_normal.y + tip_to_tip.z*plane_normal.z) < 0.0f;
 				const std::decay_t<decltype(a)> points[] = {a, b, c, intersection_a_to_b, intersection_b_to_c, intersection_c_to_a};
 
@@ -668,12 +711,12 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			}
 			else
 			{
-				return dot(sub(c, plane_pos), plane_normal) > 0 ? 0 : -1;
+				return dot_xyz(sub_xyz(c, plane_pos), plane_normal) > 0 ? 0 : -1;
 			}
 			return 0;
 		}
 
-		template<triangle TriangleType>
+		template<typename IteratorCollection, triangle TriangleType>
 		constexpr void draw_triangle(const TriangleType& source_triangle, std::array<grh::vec3, 3>& pts_screen_space, draw_horizontal_line_function<TriangleType> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height,
 									 unsigned_integral auto viewport_x_start, unsigned_integral auto viewport_y_start, unsigned_integral auto viewport_x_end, unsigned_integral auto viewport_y_end)
 		{
@@ -785,14 +828,14 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			// draw
 			for(std::uint_fast8_t i=0; i<clipped_tris_num; i++)
 			{
-				draw_triangle_unsafe(source_triangle, clipped_tris[i], draw_hline_function, frame_width, frame_height);
+				draw_triangle_unsafe<IteratorCollection>(source_triangle, clipped_tris[i], draw_hline_function, frame_width, frame_height);
 			}
 		}
 
-		template<triangle TriangleType>
+		template<typename IteratorCollection, triangle TriangleType>
 		constexpr void draw_triangle(const TriangleType& source_triangle, std::array<grh::vec3, 3>& pts_screen_space, draw_horizontal_line_function<TriangleType> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 		{
-			draw_triangle<TriangleType>(source_triangle, pts_screen_space, draw_hline_function, frame_width, frame_height, 1u, 1u, (frame_width-1), (frame_height-1));
+			draw_triangle<IteratorCollection, TriangleType>(source_triangle, pts_screen_space, draw_hline_function, frame_width, frame_height, 1u, 1u, (frame_width-1), (frame_height-1));
 		}
 
 		constexpr grh::mat4x4 create_perspective(float fovy, float aspect, float z_near, float z_far)
@@ -821,7 +864,7 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 		template<vector3 Vec3Type>
 		constexpr grh::mat4x4 create_lookat(const Vec3Type& eye, const Vec3Type& center, const Vec3Type& up)
 		{
-			const Vec3Type f(normalize(sub(center,eye)));
+			const Vec3Type f(normalize(sub_xyz(center,eye)));
 			const Vec3Type s(normalize(cross(up, f)));
 			const Vec3Type u(cross(f, s));
 
@@ -842,7 +885,7 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			return result;
 		}
 
-		template<triangle_list TriangleList>
+		template<typename IteratorCollection, triangle_list TriangleList>
 		constexpr void render_rasterize(const TriangleList& triangles, const camera auto& camera, draw_horizontal_line_function<triangle_from_list_t<TriangleList>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 		{
 			using TriangleType = std::decay_t<decltype(*triangles.begin())>;
@@ -858,8 +901,8 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			const grh::mat4x4 lookat 		= create_lookat(glm::vec3{camera.pos.x, camera.pos.y, camera.pos.z}, glm::vec3{camera.lookat.x, camera.lookat.y, camera.lookat.z}, glm::vec3{camera.up.x, camera.up.y, camera.up.z});
 			const grh::mat4x4 projview 		= mul(perspective, lookat);
 
-			const grh::vec3 near_clipping_plane_normal 	= direction_to(camera.pos, camera.lookat);
-			const grh::vec3 near_clipping_plane_pos 	= add(camera.pos, mul(near_clipping_plane_normal, near_plane));
+			const vector3 auto near_clipping_plane_normal 	= direction_to(camera.pos, camera.lookat);
+			const vector3 auto near_clipping_plane_pos 		= add_xyz(camera.pos, mul_xyz(near_clipping_plane_normal, near_plane));
 
 			for(const triangle auto& tri : triangles)
 			{
@@ -902,17 +945,25 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 
 					if(backface_culling)
 					{
-						draw_triangle(clipped_tri, pts, draw_hline_function, frame_width, frame_height);
+						draw_triangle<IteratorCollection, TriangleType>(clipped_tri, pts, draw_hline_function, frame_width, frame_height);
 					}
 				}
 			}
 		}
 	}
 
-	template<triangle_list TriangleList>
+	template<typename IteratorCollection, triangle_list TriangleList>
 	constexpr void 	render(const TriangleList& triangles, const camera auto& camera, draw_horizontal_line_function<triangle_from_list_t<TriangleList>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 	{
 		detail::render_rasterize(triangles, camera, draw_hline_function, frame_width, frame_height);
+	}
+
+	struct dummy_iterator_collection { void for_each(auto){} };
+
+	template<triangle_list TriangleList>
+	constexpr void 	render(const TriangleList& triangles, const camera auto& camera, draw_horizontal_line_function<triangle_from_list_t<TriangleList>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
+	{
+		detail::render_rasterize<dummy_iterator_collection, TriangleList>(triangles, camera, draw_hline_function, frame_width, frame_height);
 	}
 
 	namespace helpers
