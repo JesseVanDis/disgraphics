@@ -65,7 +65,7 @@ int main()
 
 	std::vector<grh::tri> triangles;
 	//triangles.push_back({{0,0,5}, {2,0.2f,5}, {0,1,5}});
-	triangles.push_back({{0,0,15}, {2,0,15}, {1,1,15}});
+	triangles.push_back({{0,0,5}, {2,0,5}, {1,1,5}});
 	//triangles.push_back({{2,1,5}, {2,0.2f,5}, {0,1,5}});
 
 	//s_camera.pitch = 0.840000f;

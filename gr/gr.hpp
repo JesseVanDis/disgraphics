@@ -1,8 +1,10 @@
 #ifndef CPURAYTRACER_GT_HPP
 #define CPURAYTRACER_GT_HPP
 
+#include <array>
 #include <cstdint>
 #include <memory>
+#include <span>
 
 namespace gr
 {
@@ -125,7 +127,6 @@ namespace gr::helpers
 	constexpr cam					lookat(const vector3 auto& pos, const vector3 auto& lookat, const vector3 auto& up, const std::floating_point auto& fov = 2.0f);
 }
 
-
 // implementation
 #include <span>
 #include <algorithm>
@@ -135,7 +136,6 @@ namespace gr::helpers
 #include <gcem.hpp>
 #define HAS_GCEM
 #endif
-
 
 namespace gr
 {
@@ -360,14 +360,15 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 				return (current_ypos-1);
 			}
 			//assert((b.x_it - a.x_it) != 0.0f);
+			int lowest_y = std::min(a.y_start + a.height, b.y_start + b.height);
 			int calculatedIterationsLeft = static_cast<int>(std::floor((a.x - b.x) / (b.x_it - a.x_it)));
 			int y_limit = current_ypos + calculatedIterationsLeft;
-			return y_limit;
+			return std::min(y_limit, lowest_y);
 		}
 
 		inline constexpr void check_context_validity(draw_hline_ctx& ctx)
 		{
-#if 1
+#if 0
 			assert(ctx.px_x_to 		>= ctx.px_x_from);
 			assert(ctx.px_y 		< ctx.buffer_height);
 			assert(ctx.px_x_from 	< ctx.buffer_width);
@@ -380,20 +381,21 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 #endif
 		}
 
+		/// no bounds checking here!
 		template<triangle TriangleType>
-		constexpr void draw_triangle(const TriangleType& source_triangle, std::array<grh::vec3, 3>& pts, draw_horizontal_line_function<TriangleType> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
+		constexpr void draw_triangle_unsafe(const TriangleType& source_triangle, std::array<grh::vec3, 3>& pts_screen_space, draw_horizontal_line_function<TriangleType> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 		{
             struct line {const grh::vec3& p0, &p1;};
 
-            std::sort(pts.begin(), pts.end(), [](const grh::vec3& a, const grh::vec3& b){return a.y < b.y;});
+            std::sort(pts_screen_space.begin(), pts_screen_space.end(), [](const grh::vec3& a, const grh::vec3& b){return a.y < b.y;});
 
             // take lines
-            const line line_long  = {pts[0], pts[2]};
-            const line line_top   = {pts[0], pts[1]};
-            const line line_bot   = {pts[1], pts[2]};
+            const line line_long  = {pts_screen_space[0], pts_screen_space[2]};
+            const line line_top   = {pts_screen_space[0], pts_screen_space[1]};
+            const line line_bot   = {pts_screen_space[1], pts_screen_space[2]};
 
             // check whether the long line is on the left or right
-            float cross_z = (pts[1].x - pts[0].x) * (pts[2].y - pts[0].y) - (pts[2].x - pts[0].x) * (pts[1].y - pts[0].y);
+            float cross_z = (pts_screen_space[1].x - pts_screen_space[0].x) * (pts_screen_space[2].y - pts_screen_space[0].y) - (pts_screen_space[2].x - pts_screen_space[0].x) * (pts_screen_space[1].y - pts_screen_space[0].y);
 
 			draw_hline_ctx ctx; // NOLINT
 			ctx.buffer_width = static_cast<uint32_t>(frame_width);
@@ -466,61 +468,335 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 					++line_it_long;
 					++line_it_bot;
 				}
-
 			}
+		}
 
 #if 0
-            line_it its[3] = {
-					line_it_from_line()
-			};
 
-            // create iterators
-            union{struct{SLineIt Ll, Tl1, Tl2;}It;SLineIt Its[3];};
+struct Face
+{
+	Vec3  p[3];
+	Vec3  color = Vec3(0.7f, 0.7f, 0.7f);
+	struct
+	{
+		Vec3 edge0; // a to b
+		Vec3 edge1; // b to c
+		Vec3 edge2; // c to a
+		Vec3 normal;
+		Vec3 oneOverNormal;
+		Vec3 center;
+		float dotNp0 = 0.0;
+	} precalculated;
 
-            for(int i=0; i<3; i++)
-            {
-                SLineIt& c = Its[i]; SLine& l = Lines[i];
-                float Sx = l.p1x, Sy = l.p1y, Ex = l.p2x, Ey = l.p2y; // useful vars
+	void precalculate();
+};
 
-                c.YStart = (int)ceil(Sy);
-                c.Height = (int)ceil(Ey) - c.YStart; // set
 
-                float Oh = 1.0f / (float)c.Height;
-                c.Xit = (Ex - Sx) * Oh; // interpolation
 
-                // calculate intencity
-                c.LYPerc = (1.0f - (dot(Sx - Cx, Sy - Cy, XDir, YDir) / Dist)) * 40.0f;
-                float PercEnd = (1.0f - (dot(Ex - Cx, Ey - Cy, XDir, YDir) / Dist)) * 40.0f;
-                c.LYPercIt = (PercEnd - c.LYPerc) * Oh;
+static uint clip(const Vec3& planePos, const Vec3& planeNormal, const ViewSpaceFace& face, ViewSpaceFace output[2])
+{
+	Vec3 a = face.p[0];
+	Vec3 b = face.p[1];
+	Vec3 c = face.p[2];
+	Vec3 aToB = face.precalculated.edge0.normalized0(); // TODO: This can be precalculated in the face
+	Vec3 bToC = face.precalculated.edge1.normalized0(); // TODO: This can be precalculated in the face
+	Vec3 cToA = face.precalculated.edge2.normalized0(); // TODO: This can be precalculated in the face
+	float aToBt = intersect(a, aToB, planePos, planeNormal);
+	float bToCt = intersect(b, bToC, planePos, planeNormal);
+	float cToAt = intersect(c, cToA, planePos, planeNormal);
 
-                float	SubPixel = ceil(Sy) - Sy;
-                c.X = Sx + (c.Xit * SubPixel); // sub pixel
-                c.LYPerc = c.LYPerc + (c.LYPercIt * SubPixel);
-            }
+	bool intersectsAToB = (aToBt > 0.0f && aToBt < face.precalculated.edge0.length());
+	bool intersectsBToC = (bToCt > 0.0f && bToCt < face.precalculated.edge1.length());
+	bool intersectsCToA = (cToAt > 0.0f && cToAt < face.precalculated.edge2.length());
+
+	Vec3 intersectionAToB = intersectsAToB ? (a + aToB * aToBt) : Vec3::sInvalidPoint();
+	Vec3 intersectionBToC = intersectsBToC ? (b + bToC * bToCt) : Vec3::sInvalidPoint();
+	Vec3 intersectionCToA = intersectsCToA ? (c + cToA * cToAt) : Vec3::sInvalidPoint();
+
+	const Vec3& triangleTip = (intersectsAToB && intersectsCToA) ? a : ((intersectsAToB && intersectsBToC) ? b : c);
+	const Vec3& anyOtherTip = (intersectsAToB && intersectsCToA) ? b : ((intersectsAToB && intersectsBToC) ? c : a);
+
+	if(intersectsAToB || intersectsBToC || intersectsCToA)
+	{
+		bool shouldCutToQuad = dot((triangleTip - anyOtherTip), planeNormal) < 0.0f;
+
+		const Vec3 points[6] = { a, b, c, intersectionAToB, intersectionBToC, intersectionCToA };
+		enum
+		{
+			IndexA = 0,
+			IndexB = 1,
+			IndexC = 2,
+			IndexIntersectAtoB = 3,
+			IndexIntersectBtoC = 4,
+			IndexIntersectCtoA = 5,
+		};
+
+		const static vector<uint> s_pointIndices[] = {
+			{ }, 														// 	0, triangle has not intersection after all ?
+			{ IndexC, IndexIntersectCtoA, IndexIntersectBtoC }, 		// 	1, intersection between c->a and c->b, cut out triangle
+			{ IndexA, IndexIntersectAtoB, IndexIntersectCtoA }, 		// 	2, intersection between a->b and a->c, cut out triangle
+			{ IndexB, IndexIntersectAtoB, IndexIntersectBtoC }, 		// 	3, intersection between b->a and b->c, cut out triangle
+			{ }, 														// 	4, triangle has not intersection after all ?
+			{ IndexA, IndexB, IndexIntersectBtoC, IndexIntersectCtoA }, // 	5, intersection between c->a and c->b, cut out quad
+			{ IndexB, IndexC, IndexIntersectCtoA, IndexIntersectAtoB }, // 	6, intersection between a->b and a->c, cut out quad
+			{ IndexC, IndexA, IndexIntersectAtoB, IndexIntersectBtoC }, // 	7, intersection between b->a and b->c, cut out quad
+		};
+
+		const uint state = 	((!intersectsAToB ? 0b0001u : 0u) |
+							   (!intersectsBToC ? 0b0010u : 0u) |
+							   (!intersectsCToA ? 0b0011u : 0u)) +
+							  (shouldCutToQuad ? 0b0100u : 0u);
+
+		const vector<uint>& indices = s_pointIndices[state];
+
+		for(size_t i=0; i<indices.size()-2; i++)
+		{
+			ViewSpaceFace& target = output[i];
+			target.p[0] = points[indices[((i<<1u)+0u)&0b11u]];
+			target.p[1] = points[indices[((i<<1u)+1u)&0b11u]];
+			target.p[2] = points[indices[((i<<1u)+2u)&0b11u]];
+			target.precalculate();
+		}
+		uint numTris = indices.size() - 2;
+		return numTris;
+	}
+	else
+	{
+		output[0] = face;
+		return dot((c - planePos), planeNormal) > 0.0f ? 1 : 0u;
+	}
+}
+
+static void clip(const Vec3& planePos, const Vec3& planeNormal, ViewSpaceFace buffer[MaxClippingPlanes*2], size_t* pNumPlanes)
+{
+	ViewSpaceFace output[MaxClippingPlanes*2];
+	size_t numPlanes = 0u;
+	for(size_t i=0; i < *pNumPlanes; i++)
+	{
+		numPlanes += clip(planePos, planeNormal, buffer[i], &output[numPlanes]);
+		assert(numPlanes <= MaxClippingPlanes*2);
+	}
+	*pNumPlanes = numPlanes;
+	memcpy(buffer, output, sizeof(output[0]) * numPlanes);
+}
 
 #endif
 
-#if 0
-			int p0_px_x_i = pts[0].x; // NOLINT
-			int p0_px_y_i = pts[0].y; // NOLINT
-			int p1_px_x_i = pts[1].x; // NOLINT
-			int p1_px_y_i = pts[1].y; // NOLINT
-			int p2_px_x_i = pts[2].x; // NOLINT
-			int p2_px_y_i = pts[2].y; // NOLINT
+		constexpr float intersect(const grh::vec3& ray_origin, const grh::vec3& ray_dir, const grh::vec3& plane_pos, const grh::vec3& plane_normal)
+		{
+			const float denom = (plane_normal.x * ray_dir.x) + (plane_normal.y * ray_dir.y) + (plane_normal.z * ray_dir.z);
+			if ((denom*denom) > (0.0001f * 0.0001f)) // your favorite epsilon
+			{
+				const grh::vec3 d = {plane_pos.x - ray_origin.x, plane_pos.y - ray_origin.y, plane_pos.z - ray_origin.z};
+				const float d_dot = (d.x * plane_normal.x) + (d.y * plane_normal.y) + (d.z * plane_normal.z);
+				return d_dot / denom;
+			}
+			return -1.0f;
+		}
 
-			if(p0_px_x_i > 0 && p0_px_x_i < target.width && p0_px_y_i > 0 && p0_px_y_i < target.height)
+		constexpr bool clip_triangle(const grh::vec3& plane_pos, const grh::vec3& plane_normal, std::array<grh::vec3, 3>& tri_in_out, std::array<grh::vec3, 3>& tri_extra_out)
+		{
+			const grh::vec3& a = tri_in_out[0];
+			const grh::vec3& b = tri_in_out[1];
+			const grh::vec3& c = tri_in_out[2];
+
+			const grh::vec3 ab = {b.x - a.x, b.y - a.y, b.z - a.z};
+			const grh::vec3 bc = {c.x - b.x, c.y - b.y, c.z - b.z};
+			const grh::vec3 ca = {a.x - c.x, a.y - c.y, a.z - c.z};
+
+			const float ab_len = std::sqrt(ab.x*ab.x + ab.y*ab.y + ab.z*ab.z);
+			const float bc_len = std::sqrt(bc.x*bc.x + bc.y*bc.y + bc.z*bc.z);
+			const float ca_len = std::sqrt(ca.x*ca.x + ca.y*ca.y + ca.z*ca.z);
+
+			const float ab_len_inv = 1.0f / ab_len;
+			const float bc_len_inv = 1.0f / bc_len;
+			const float ca_len_inv = 1.0f / ca_len;
+
+			const grh::vec3 ab_dir = {ab.x * ab_len_inv, ab.y * ab_len_inv, ab.z * ab_len_inv}; // TODO: This can be precalculated
+			const grh::vec3 bc_dir = {bc.x * bc_len_inv, bc.y * bc_len_inv, bc.z * bc_len_inv}; // TODO: This can be precalculated
+			const grh::vec3 ca_dir = {ca.x * ca_len_inv, ca.y * ca_len_inv, ca.z * ca_len_inv}; // TODO: This can be precalculated
+
+			const float a_to_b_t = intersect(a, ab_dir, plane_pos, plane_normal);
+			const float b_to_c_t = intersect(b, bc_dir, plane_pos, plane_normal);
+			const float c_to_a_t = intersect(c, ca_dir, plane_pos, plane_normal);
+
+			const bool intersects_a_to_b = (a_to_b_t > 0.0f && a_to_b_t < ab_len);
+			const bool intersects_b_to_c = (b_to_c_t > 0.0f && b_to_c_t < bc_len);
+			const bool intersects_c_to_a = (c_to_a_t > 0.0f && c_to_a_t < ca_len);
+
+			const grh::vec3 intersection_a_to_b = {a.x + ab_dir.x * a_to_b_t, a.y + ab_dir.y * a_to_b_t, a.z + ab_dir.z * a_to_b_t};
+			const grh::vec3 intersection_b_to_c = {b.x + bc_dir.x * b_to_c_t, b.y + bc_dir.y * b_to_c_t, b.z + bc_dir.z * b_to_c_t};
+			const grh::vec3 intersection_c_to_a = {c.x + ca_dir.x * c_to_a_t, c.y + ca_dir.y * c_to_a_t, c.z + ca_dir.z * c_to_a_t};
+
+			const grh::vec3& triangle_tip  = (intersects_a_to_b && intersects_c_to_a) ? a : ((intersects_a_to_b && intersects_b_to_c) ? b : c);
+			const grh::vec3& any_other_tip = (intersects_a_to_b && intersects_c_to_a) ? b : ((intersects_a_to_b && intersects_b_to_c) ? c : a);
+
+			if(intersects_a_to_b || intersects_b_to_c || intersects_c_to_a)
 			{
-				target.data()[p0_px_x_i + p0_px_y_i * target.width] = 0xffffffff;
+				const grh::vec3 	tip_to_tip 			= {triangle_tip.x - any_other_tip.x, triangle_tip.y - any_other_tip.y, triangle_tip.z - any_other_tip.z};
+				const bool 			should_cut_to_quad 	= (tip_to_tip.x*plane_normal.x + tip_to_tip.y*plane_normal.y + tip_to_tip.z*plane_normal.z) < 0.0f;
+				const grh::vec3 	points[6] 			= { a, b, c, intersection_a_to_b, intersection_b_to_c, intersection_c_to_a};
+
+				struct // NOLINT
+				{
+					std::uint_fast8_t indices[4]; // corresponds to the index of 'points'. so max num is 5  ( points.size() - 1 )
+					std::uint_fast8_t num_indices = 2;
+				} constexpr s_point_indices[] =
+						{
+								{ }, 					// 	0, triangle has not intersection after all ?
+								{ { 2, 5, 4}, 3 }, 		// 	1, intersection between c->a and c->b, cut out triangle
+								{ { 0, 3, 5}, 3 }, 		// 	2, intersection between a->b and a->c, cut out triangle
+								{ { 1, 3, 4}, 3 }, 		// 	3, intersection between b->a and b->c, cut out triangle
+								{ }, 					// 	4, triangle has not intersection after all ?
+								{ { 0, 1, 4, 5}, 4 }, 	// 	5, intersection between c->a and c->b, cut out quad
+								{ { 1, 2, 5, 3}, 4 }, 	// 	6, intersection between a->b and a->c, cut out quad
+								{ { 2, 0, 3, 4}, 4 }, 	// 	7, intersection between b->a and b->c, cut out quad
+						};
+
+				const uint state = ((!intersects_a_to_b ? 0b0001u : 0u) | (!intersects_b_to_c ? 0b0010u : 0u) | (!intersects_c_to_a ? 0b0011u : 0u)) + (should_cut_to_quad ? 0b0100u : 0u);
+				const auto& indices = s_point_indices[state];
+
+				uint num_tris = indices.num_indices - 2;
+				assert(num_tris == 1 || num_tris == 2);
+				tri_in_out[0] = points[indices.indices[((0<<1u)+0u)&0b11u]];
+				tri_in_out[1] = points[indices.indices[((0<<1u)+1u)&0b11u]];
+				tri_in_out[2] = points[indices.indices[((0<<1u)+2u)&0b11u]];
+
+				if(num_tris == 2)
+				{
+					tri_extra_out[0] = points[indices.indices[((1<<1u)+0u)&0b11u]];
+					tri_extra_out[1] = points[indices.indices[((1<<1u)+1u)&0b11u]];
+					tri_extra_out[2] = points[indices.indices[((1<<1u)+2u)&0b11u]];
+					return true;
+				}
 			}
-			if(p1_px_x_i > 0 && p1_px_x_i < target.width && p1_px_y_i > 0 && p1_px_y_i < target.height)
+
+			return false;
+		}
+
+		template<triangle TriangleType>
+		constexpr void draw_triangle(const TriangleType& source_triangle, std::array<grh::vec3, 3>& pts_screen_space, draw_horizontal_line_function<TriangleType> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height,
+									 unsigned_integral auto viewport_x_start, unsigned_integral auto viewport_y_start, unsigned_integral auto viewport_x_end, unsigned_integral auto viewport_y_end)
+		{
+			// clipping on edges
+
+			std::array<std::array<grh::vec3, 3>, (2*2*2*2)+1> 	clipped_tris; // NOLINT
+			std::uint_fast8_t 									clipped_tris_num = 0;
+
+			// first just add the main triangle
+			clipped_tris[clipped_tris_num++] = pts_screen_space;
+
+			// clipping planes
+			//struct clipping_plane { grh::vec3 origin, dir; };
+			//clipping_plane clipping
+
+			// top clipping plane
 			{
-				target.data()[p1_px_x_i + p1_px_y_i * target.width] = 0xffffffff;
+				const grh::vec3 n = {0, -1, 0};
+				const grh::vec3 o = {0, static_cast<float>(viewport_y_end), 0};
+
+				for(std::uint_fast8_t i=clipped_tris_num; i--;)
+				{
+					std::array<grh::vec3, 3>& tri = clipped_tris[i];
+
+					const bool 					in_screen[3] 		= {tri[0].y < viewport_y_end, tri[1].y < viewport_y_end, tri[2].y < viewport_y_end};
+					const std::uint_fast8_t 	num_pts_in_screen 	= in_screen[0] + in_screen[1] + in_screen[2];
+
+					if(num_pts_in_screen == 0) // not in screen. delete
+					{
+						std::swap(clipped_tris[i], clipped_tris[clipped_tris_num-1]);
+						clipped_tris_num--;
+					}
+					else if(num_pts_in_screen != 3) // otherwise nothing to clip. leave it
+					{
+						clipped_tris_num += clip_triangle(o, n, tri, clipped_tris[clipped_tris_num]);
+					}
+				}
 			}
-			if(p2_px_x_i > 0 && p2_px_x_i < target.width && p2_px_y_i > 0 && p2_px_y_i < target.height)
+
+			// bot clipping plane
 			{
-				target.data()[p2_px_x_i + p2_px_y_i * target.width] = 0xffffffff;
+				const grh::vec3 n = {0, 1, 0};
+				const grh::vec3 o = {0, static_cast<float>(viewport_y_start), 0};
+
+				for(std::uint_fast8_t i=clipped_tris_num; i--;)
+				{
+					std::array<grh::vec3, 3>& tri = clipped_tris[i];
+
+					const bool 					in_screen[3] 		= {tri[0].y > viewport_y_start, tri[1].y > viewport_y_start, tri[2].y > viewport_y_start};
+					const std::uint_fast8_t 	num_pts_in_screen 	= in_screen[0] + in_screen[1] + in_screen[2];
+
+					if(num_pts_in_screen == 0) // not in screen. delete
+					{
+						std::swap(clipped_tris[i], clipped_tris[clipped_tris_num-1]);
+						clipped_tris_num--;
+					}
+					else if(num_pts_in_screen != 3) // otherwise nothing to clip. leave it
+					{
+						clipped_tris_num += clip_triangle(o, n, tri, clipped_tris[clipped_tris_num]);
+					}
+				}
 			}
-#endif
+
+			// left clipping plane
+			{
+				const grh::vec3 n = {1, 0, 0};
+				const grh::vec3 o = {static_cast<float>(viewport_x_start), 0, 0};
+
+				for(std::uint_fast8_t i=clipped_tris_num; i--;)
+				{
+					std::array<grh::vec3, 3>& tri = clipped_tris[i];
+
+					const bool 					in_screen[3] 		= {tri[0].x > viewport_x_start, tri[1].x > viewport_x_start, tri[2].x > viewport_x_start};
+					const std::uint_fast8_t 	num_pts_in_screen 	= in_screen[0] + in_screen[1] + in_screen[2];
+
+					if(num_pts_in_screen == 0) // not in screen. delete
+					{
+						std::swap(clipped_tris[i], clipped_tris[clipped_tris_num-1]);
+						clipped_tris_num--;
+					}
+					else if(num_pts_in_screen != 3) // otherwise nothing to clip. leave it
+					{
+						clipped_tris_num += clip_triangle(o, n, tri, clipped_tris[clipped_tris_num]);
+					}
+				}
+			}
+
+			// right clipping plane
+			{
+				const grh::vec3 n = {-1, 0, 0};
+				const grh::vec3 o = {static_cast<float>(viewport_x_end), 0, 0};
+
+				for(std::uint_fast8_t i=clipped_tris_num; i--;)
+				{
+					std::array<grh::vec3, 3>& tri = clipped_tris[i];
+
+					const bool 					in_screen[3] 		= {tri[0].x < viewport_x_end, tri[1].x < viewport_x_end, tri[2].x < viewport_x_end};
+					const std::uint_fast8_t 	num_pts_in_screen 	= in_screen[0] + in_screen[1] + in_screen[2];
+
+					if(num_pts_in_screen == 0) // not in screen. delete
+					{
+						std::swap(clipped_tris[i], clipped_tris[clipped_tris_num-1]);
+						clipped_tris_num--;
+					}
+					else if(num_pts_in_screen != 3) // otherwise nothing to clip. leave it
+					{
+						clipped_tris_num += clip_triangle(o, n, tri, clipped_tris[clipped_tris_num]);
+					}
+				}
+			}
+
+			// draw
+			for(std::uint_fast8_t i=0; i<clipped_tris_num; i++)
+			{
+				draw_triangle_unsafe(source_triangle, clipped_tris[i], draw_hline_function, frame_width, frame_height);
+			}
+		}
+
+		template<triangle TriangleType>
+		constexpr void draw_triangle(const TriangleType& source_triangle, std::array<grh::vec3, 3>& pts_screen_space, draw_horizontal_line_function<TriangleType> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
+		{
+			draw_triangle<TriangleType>(source_triangle, pts_screen_space, draw_hline_function, frame_width, frame_height, 50u, 50u, (frame_width-50), (frame_height-50));
 		}
 
 		constexpr grh::mat4x4 create_perspective(float fovy, float aspect, float z_near, float z_far)

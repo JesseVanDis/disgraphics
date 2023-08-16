@@ -4,7 +4,7 @@ project(cpuraytracer)
 include(cmake/CPM.cmake)
 
 # glm
-CPMAddPackage("gh:g-truc/glm#0.9.9.8")
+CPMAddPackage("gh:g-truc/glm#5c46b9c07008ae65cb81ab79cd677ecc1934b903") # 0.9.9.9
 
 # cgem
 CPMAddPackage("gh:kthohr/gcem@1.17.0")
