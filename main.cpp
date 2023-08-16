@@ -37,7 +37,7 @@ int main()
 	constexpr size_t screen_width = 800;
 	constexpr size_t screen_height = 800;
 
-	constexpr size_t scale = 2;
+	constexpr size_t scale = 1;
 
 	// https://www.glfw.org/docs/3.3/window_guide.html
 	GLFWwindow* window = glfwCreateWindow(screen_width, screen_height, "My Title", nullptr, nullptr);

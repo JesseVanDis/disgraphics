@@ -482,118 +482,7 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			}
 		}
 
-#if 0
-
-struct Face
-{
-	Vec3  p[3];
-	Vec3  color = Vec3(0.7f, 0.7f, 0.7f);
-	struct
-	{
-		Vec3 edge0; // a to b
-		Vec3 edge1; // b to c
-		Vec3 edge2; // c to a
-		Vec3 normal;
-		Vec3 oneOverNormal;
-		Vec3 center;
-		float dotNp0 = 0.0;
-	} precalculated;
-
-	void precalculate();
-};
-
-
-
-static uint clip(const Vec3& planePos, const Vec3& planeNormal, const ViewSpaceFace& face, ViewSpaceFace output[2])
-{
-	Vec3 a = face.p[0];
-	Vec3 b = face.p[1];
-	Vec3 c = face.p[2];
-	Vec3 aToB = face.precalculated.edge0.normalized0(); // TODO: This can be precalculated in the face
-	Vec3 bToC = face.precalculated.edge1.normalized0(); // TODO: This can be precalculated in the face
-	Vec3 cToA = face.precalculated.edge2.normalized0(); // TODO: This can be precalculated in the face
-	float aToBt = intersect(a, aToB, planePos, planeNormal);
-	float bToCt = intersect(b, bToC, planePos, planeNormal);
-	float cToAt = intersect(c, cToA, planePos, planeNormal);
-
-	bool intersectsAToB = (aToBt > 0.0f && aToBt < face.precalculated.edge0.length());
-	bool intersectsBToC = (bToCt > 0.0f && bToCt < face.precalculated.edge1.length());
-	bool intersectsCToA = (cToAt > 0.0f && cToAt < face.precalculated.edge2.length());
-
-	Vec3 intersectionAToB = intersectsAToB ? (a + aToB * aToBt) : Vec3::sInvalidPoint();
-	Vec3 intersectionBToC = intersectsBToC ? (b + bToC * bToCt) : Vec3::sInvalidPoint();
-	Vec3 intersectionCToA = intersectsCToA ? (c + cToA * cToAt) : Vec3::sInvalidPoint();
-
-	const Vec3& triangleTip = (intersectsAToB && intersectsCToA) ? a : ((intersectsAToB && intersectsBToC) ? b : c);
-	const Vec3& anyOtherTip = (intersectsAToB && intersectsCToA) ? b : ((intersectsAToB && intersectsBToC) ? c : a);
-
-	if(intersectsAToB || intersectsBToC || intersectsCToA)
-	{
-		bool shouldCutToQuad = dot((triangleTip - anyOtherTip), planeNormal) < 0.0f;
-
-		const Vec3 points[6] = { a, b, c, intersectionAToB, intersectionBToC, intersectionCToA };
-		enum
-		{
-			IndexA = 0,
-			IndexB = 1,
-			IndexC = 2,
-			IndexIntersectAtoB = 3,
-			IndexIntersectBtoC = 4,
-			IndexIntersectCtoA = 5,
-		};
-
-		const static vector<uint> s_pointIndices[] = {
-			{ }, 														// 	0, triangle has not intersection after all ?
-			{ IndexC, IndexIntersectCtoA, IndexIntersectBtoC }, 		// 	1, intersection between c->a and c->b, cut out triangle
-			{ IndexA, IndexIntersectAtoB, IndexIntersectCtoA }, 		// 	2, intersection between a->b and a->c, cut out triangle
-			{ IndexB, IndexIntersectAtoB, IndexIntersectBtoC }, 		// 	3, intersection between b->a and b->c, cut out triangle
-			{ }, 														// 	4, triangle has not intersection after all ?
-			{ IndexA, IndexB, IndexIntersectBtoC, IndexIntersectCtoA }, // 	5, intersection between c->a and c->b, cut out quad
-			{ IndexB, IndexC, IndexIntersectCtoA, IndexIntersectAtoB }, // 	6, intersection between a->b and a->c, cut out quad
-			{ IndexC, IndexA, IndexIntersectAtoB, IndexIntersectBtoC }, // 	7, intersection between b->a and b->c, cut out quad
-		};
-
-		const uint state = 	((!intersectsAToB ? 0b0001u : 0u) |
-							   (!intersectsBToC ? 0b0010u : 0u) |
-							   (!intersectsCToA ? 0b0011u : 0u)) +
-							  (shouldCutToQuad ? 0b0100u : 0u);
-
-		const vector<uint>& indices = s_pointIndices[state];
-
-		for(size_t i=0; i<indices.size()-2; i++)
-		{
-			ViewSpaceFace& target = output[i];
-			target.p[0] = points[indices[((i<<1u)+0u)&0b11u]];
-			target.p[1] = points[indices[((i<<1u)+1u)&0b11u]];
-			target.p[2] = points[indices[((i<<1u)+2u)&0b11u]];
-			target.precalculate();
-		}
-		uint numTris = indices.size() - 2;
-		return numTris;
-	}
-	else
-	{
-		output[0] = face;
-		return dot((c - planePos), planeNormal) > 0.0f ? 1 : 0u;
-	}
-}
-
-static void clip(const Vec3& planePos, const Vec3& planeNormal, ViewSpaceFace buffer[MaxClippingPlanes*2], size_t* pNumPlanes)
-{
-	ViewSpaceFace output[MaxClippingPlanes*2];
-	size_t numPlanes = 0u;
-	for(size_t i=0; i < *pNumPlanes; i++)
-	{
-		numPlanes += clip(planePos, planeNormal, buffer[i], &output[numPlanes]);
-		assert(numPlanes <= MaxClippingPlanes*2);
-	}
-	*pNumPlanes = numPlanes;
-	memcpy(buffer, output, sizeof(output[0]) * numPlanes);
-}
-
-#endif
-
-/// does not check for 0 division
+		/// does not check for 0 division
 		template<vector3 Vec3Type>
 		constexpr Vec3Type normalize(const Vec3Type& v)
 		{
@@ -797,9 +686,6 @@ static void clip(const Vec3& planePos, const Vec3& planeNormal, ViewSpaceFace bu
 			clipped_tris[clipped_tris_num++] = pts_screen_space;
 
 			// clipping planes
-			//struct clipping_plane { grh::vec3 origin, dir; };
-			//clipping_plane clipping
-
 			// top clipping plane
 			{
 				const grh::vec3 n = {0, -1, 0};
@@ -1011,22 +897,15 @@ static void clip(const Vec3& planePos, const Vec3& planeNormal, ViewSpaceFace bu
 					pts[2].y = ((p2_projview.y / p2_projview.w) * 0.5f + 0.5f) * target_height_flt;
 					pts[2].z = (p2_projview.z / p2_projview.w);
 
-					//float cross_z = (pts[1].x - pts[0].x) * (pts[2].y - pts[0].y) - (pts[2].x - pts[0].x) * (pts[1].y - pts[0].y);
-					//const bool backface_culling = cross_z > 0.0f;
+					float cross_z = (pts[1].x - pts[0].x) * (pts[2].y - pts[0].y) - (pts[2].x - pts[0].x) * (pts[1].y - pts[0].y);
+					const bool backface_culling = cross_z > 0.0f;
 
-					printf("%f, %f, %f | ", pts[0].z, pts[1].z, pts[2].z);
-
-					//if(backface_culling)
-					//{
-						if(pts[0].z > 0.0f || pts[1].z > 0.0f || pts[2].z > 0.0f)
-						{
-							draw_triangle(clipped_tri, pts, draw_hline_function, frame_width, frame_height);
-						}
-					//}
+					if(backface_culling)
+					{
+						draw_triangle(clipped_tri, pts, draw_hline_function, frame_width, frame_height);
+					}
 				}
-
 			}
-			printf("\n");
 		}
 	}
 
@@ -1048,47 +927,6 @@ static void clip(const Vec3& planePos, const Vec3& planeNormal, ViewSpaceFace bu
 			};
 		}
 	}
-
-#if 1
-	namespace tests
-	{
-		struct test_draw
-		{
-			constexpr void operator()(const grh::tri& source_triangle, const gr::draw_hline_ctx& ctx)
-			{
-
-			}
-		};
-
-
-		constexpr inline void test_draw_func(const triangle auto& source_triangle, const draw_horizontal_line_ctx auto& ctx)
-		{
-		}
-
-		constexpr bool test()
-		{
-			auto camera 						= grh::lookat(grh::vec3{0,0,0}, grh::vec3{0,0,1}, grh::vec3{0,1,0}, 2.0f);
-			std::array<grh::tri, 1> triangles 	= {grh::tri{{0,0,5}, {2,1,5}, {0,2,5}}};
-
-			test_draw testdraw;
-
-			detail::render_rasterize(triangles, camera, testdraw, 100u, 100u);
-			return true;
-		}
-
-		//constexpr bool test()
-		//{
-		//	auto camera 						= grh::lookat(grh::vec3{0,0,0}, grh::vec3{0,0,1}, grh::vec3{0,1,0}, 2.0f);
-		//	std::array<grh::tri, 1> triangles 	= {grh::tri{{0,0,5}, {2,1,5}, {0,2,5}}};
-		//	test_draw testdraw;
-		//	detail::render_rasterize(triangles, camera, [](const grh::tri& source_triangle, const gr::draw_hline_ctx& ctx){}, 100u, 100u);
-		//	return true;
-		//}
-
-		//static_assert(test());
-
-	}
-#endif
 }
 
 
