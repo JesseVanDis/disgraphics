@@ -26,12 +26,23 @@ namespace gr
 	};
 
 	template<typename T>
-	concept triangle = requires(T v)
+	concept triangle_by_fields = requires(T v)
 	{
 		{v.p0} -> vector3;
 		{v.p1} -> vector3;
 		{v.p2} -> vector3;
 	};
+
+	template<typename T>
+	concept triangle_by_indices = requires(T v)
+	{
+		{v[0]} -> vector3;
+		{v[1]} -> vector3;
+		{v[2]} -> vector3;
+	};
+
+	template<typename T>
+	concept triangle = triangle_by_fields<T> || triangle_by_indices<T>;
 
 	template<typename T>
 	concept triangle_list = requires(T v)
@@ -582,60 +593,150 @@ static void clip(const Vec3& planePos, const Vec3& planeNormal, ViewSpaceFace bu
 
 #endif
 
-		constexpr float intersect(const grh::vec3& ray_origin, const grh::vec3& ray_dir, const grh::vec3& plane_pos, const grh::vec3& plane_normal)
+/// does not check for 0 division
+		template<vector3 Vec3Type>
+		constexpr Vec3Type normalize(const Vec3Type& v)
 		{
-			const float denom = (plane_normal.x * ray_dir.x) + (plane_normal.y * ray_dir.y) + (plane_normal.z * ray_dir.z);
-			if ((denom*denom) > (0.0001f * 0.0001f)) // your favorite epsilon
-			{
-				const grh::vec3 d = {plane_pos.x - ray_origin.x, plane_pos.y - ray_origin.y, plane_pos.z - ray_origin.z};
-				const float d_dot = (d.x * plane_normal.x) + (d.y * plane_normal.y) + (d.z * plane_normal.z);
-				return d_dot / denom;
-			}
-			return -1.0f;
+			const auto l = static_cast<std::decay_t<decltype(v.x)>>(1) / std::sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
+			return {v.x / l, v.y / l, v.z / l};
 		}
 
-		constexpr bool clip_triangle(const grh::vec3& plane_pos, const grh::vec3& plane_normal, std::array<grh::vec3, 3>& tri_in_out, std::array<grh::vec3, 3>& tri_extra_out)
+		/// does not check for 0 division
+		template<vector3 Vec3Type>
+		constexpr Vec3Type direction_to(const Vec3Type& from, const Vec3Type& to)
 		{
-			const grh::vec3& a = tri_in_out[0];
-			const grh::vec3& b = tri_in_out[1];
-			const grh::vec3& c = tri_in_out[2];
+			return normalize(Vec3Type{to.x - from.x, to.y - from.y, to.z - from.z});
+		}
 
-			const grh::vec3 ab = {b.x-a.x, b.y-a.y, b.z-a.z};
-			const grh::vec3 bc = {c.x-b.x, c.y-b.y, c.z-b.z};
-			const grh::vec3 ca = {a.x-c.x, a.y-c.y, a.z-c.z};
+		/// does not check for 0 division
+		constexpr auto length(const vector3 auto& vec)
+		{
+			return std::sqrt(vec.x*vec.x + vec.y*vec.y + vec.z*vec.z);
+		}
 
-			const float ab_len = std::sqrt(ab.x*ab.x + ab.y*ab.y + ab.z*ab.z);
-			const float bc_len = std::sqrt(bc.x*bc.x + bc.y*bc.y + bc.z*bc.z);
-			const float ca_len = std::sqrt(ca.x*ca.x + ca.y*ca.y + ca.z*ca.z);
+		template<vector3 Vec3Type>
+		constexpr Vec3Type cross(const Vec3Type& a, const Vec3Type& b)
+		{
+			return {a.b * b.z - b.b * a.z, a.z * b.a - b.z * a.a, a.a * b.b - b.a * a.b};
+		}
 
-			const float ab_len_inv = 1.0f / ab_len;
-			const float bc_len_inv = 1.0f / bc_len;
-			const float ca_len_inv = 1.0f / ca_len;
+		template<vector3 Vec3Type>
+		constexpr Vec3Type sub(const Vec3Type& a, const Vec3Type& b)
+		{
+			return {a.x - b.x, a.y - b.y, a.z - b.z};
+		}
 
-			const grh::vec3 ab_dir = {ab.x * ab_len_inv, ab.y * ab_len_inv, ab.z * ab_len_inv}; // TODO: This can be precalculated
-			const grh::vec3 bc_dir = {bc.x * bc_len_inv, bc.y * bc_len_inv, bc.z * bc_len_inv}; // TODO: This can be precalculated
-			const grh::vec3 ca_dir = {ca.x * ca_len_inv, ca.y * ca_len_inv, ca.z * ca_len_inv}; // TODO: This can be precalculated
+		template<vector3 Vec3Type>
+		constexpr Vec3Type add(const Vec3Type& a, const Vec3Type& b)
+		{
+			return {a.x + b.x, a.y + b.y, a.z + b.z};
+		}
 
-			const float a_to_b_t = intersect(a, ab_dir, plane_pos, plane_normal);
-			const float b_to_c_t = intersect(b, bc_dir, plane_pos, plane_normal);
-			const float c_to_a_t = intersect(c, ca_dir, plane_pos, plane_normal);
+		template<vector3 Vec3Type>
+		constexpr Vec3Type mul(const Vec3Type& a, const Vec3Type& b)
+		{
+			return Vec3Type{a.x * b.x, a.y * b.y, a.z * b.z};
+		}
 
-			const bool intersects_a_to_b = (a_to_b_t > 0.0f && a_to_b_t < ab_len);
-			const bool intersects_b_to_c = (b_to_c_t > 0.0f && b_to_c_t < bc_len);
-			const bool intersects_c_to_a = (c_to_a_t > 0.0f && c_to_a_t < ca_len);
+		template<vector3 Vec3Type>
+		constexpr Vec3Type mul(const Vec3Type& a, const decltype(Vec3Type::x)& b)
+		{
+			return Vec3Type{a.x * b, a.y * b, a.z * b};
+		}
 
-			const grh::vec3 intersection_a_to_b = {a.x + ab_dir.x * a_to_b_t, a.y + ab_dir.y * a_to_b_t, a.z + ab_dir.z * a_to_b_t};
-			const grh::vec3 intersection_b_to_c = {b.x + bc_dir.x * b_to_c_t, b.y + bc_dir.y * b_to_c_t, b.z + bc_dir.z * b_to_c_t};
-			const grh::vec3 intersection_c_to_a = {c.x + ca_dir.x * c_to_a_t, c.y + ca_dir.y * c_to_a_t, c.z + ca_dir.z * c_to_a_t};
+		constexpr grh::mat4x4 mul(const grh::mat4x4& m1, const grh::mat4x4& m2)
+		{
+			grh::mat4x4 result;
+			for(size_t k=0; k<4; k++) for(size_t i=0; i<4; i++)
+				{
+					result[k][i] = m1[0][i] * m2[k][0] + m1[1][i] * m2[k][1] + m1[2][i] * m2[k][2] + m1[3][i] * m2[k][3];
+				}
+			return result;
+		}
 
-			const grh::vec3& triangle_tip  = (intersects_a_to_b && intersects_c_to_a) ? a : ((intersects_a_to_b && intersects_b_to_c) ? b : c);
-			const grh::vec3& any_other_tip = (intersects_a_to_b && intersects_c_to_a) ? b : ((intersects_a_to_b && intersects_b_to_c) ? c : a);
+		constexpr grh::vec4 mul(const grh::mat4x4& m1, const grh::vec4& m2)
+		{
+			grh::vec4 result = {};
+			result.x = m1[0][0] * m2.x + m1[1][0] * m2.y + m1[2][0] * m2.z + m1[3][0] * m2.w;
+			result.y = m1[0][1] * m2.x + m1[1][1] * m2.y + m1[2][1] * m2.z + m1[3][1] * m2.w;
+			result.z = m1[0][2] * m2.x + m1[1][2] * m2.y + m1[2][2] * m2.z + m1[3][2] * m2.w;
+			result.w = m1[0][3] * m2.x + m1[1][3] * m2.y + m1[2][3] * m2.z + m1[3][3] * m2.w;
+			return result;
+		}
+
+		template<size_t Index>
+		constexpr auto& get_tri_pt(triangle_by_fields auto& tri) requires (Index < 3)
+		{
+			if 		constexpr( Index == 0)		return tri.p0;
+			else if constexpr( Index == 1)		return tri.p1;
+			else if constexpr( Index == 2)		return tri.p2;
+			else								return tri.p0;
+		}
+
+		template<size_t Index>
+		constexpr auto& get_tri_pt(triangle_by_indices auto& tri) requires (Index < 3)
+		{
+			return tri[Index];
+		}
+
+		constexpr auto& get_tri_p0(triangle auto& tri) { return get_tri_pt<0>(tri); }
+		constexpr auto& get_tri_p1(triangle auto& tri) { return get_tri_pt<1>(tri); }
+		constexpr auto& get_tri_p2(triangle auto& tri) { return get_tri_pt<2>(tri); }
+
+		constexpr floating_point auto intersect(const vector3 auto& ray_origin, const vector3 auto& ray_dir, const vector3 auto& plane_pos, const vector3 auto& plane_normal)
+		{
+			const floating_point auto denom = (plane_normal.x * ray_dir.x) + (plane_normal.y * ray_dir.y) + (plane_normal.z * ray_dir.z);
+			if ((denom*denom) > static_cast<decltype(denom)>(0.0001 * 0.0001)) // your favorite epsilon
+			{
+				const vector3 auto 			d = sub(plane_pos, ray_origin);
+				const floating_point auto 	d_dot = (d.x * plane_normal.x) + (d.y * plane_normal.y) + (d.z * plane_normal.z);
+				return d_dot / denom;
+			}
+			return static_cast<decltype(denom)>(-1.0f);
+		}
+
+		constexpr bool clip_triangle(const vector3 auto& plane_pos, const vector3 auto& plane_normal, triangle auto& tri_in_out, triangle auto& tri_extra_out)
+		{
+			const vector3 auto& a = get_tri_p0(tri_in_out);
+			const vector3 auto& b = get_tri_p1(tri_in_out);
+			const vector3 auto& c = get_tri_p2(tri_in_out);
+
+			const vector3 auto ab = sub(b, a);
+			const vector3 auto bc = sub(c, b);
+			const vector3 auto ca = sub(a, c);
+
+			const floating_point auto ab_len = length(ab);
+			const floating_point auto bc_len = length(bc);
+			const floating_point auto ca_len = length(ca);
+
+			const floating_point auto ab_len_inv = 1.0f / ab_len;
+			const floating_point auto bc_len_inv = 1.0f / bc_len;
+			const floating_point auto ca_len_inv = 1.0f / ca_len;
+
+			const vector3 auto ab_dir = mul(ab, ab_len_inv); // TODO: This can be precalculated
+			const vector3 auto bc_dir = mul(bc, bc_len_inv); // TODO: This can be precalculated
+			const vector3 auto ca_dir = mul(ca, ca_len_inv); // TODO: This can be precalculated
+
+			const floating_point auto a_to_b_t = intersect(a, ab_dir, plane_pos, plane_normal);
+			const floating_point auto b_to_c_t = intersect(b, bc_dir, plane_pos, plane_normal);
+			const floating_point auto c_to_a_t = intersect(c, ca_dir, plane_pos, plane_normal);
+
+			const bool intersects_a_to_b = (a_to_b_t > 0 && a_to_b_t < ab_len);
+			const bool intersects_b_to_c = (b_to_c_t > 0 && b_to_c_t < bc_len);
+			const bool intersects_c_to_a = (c_to_a_t > 0 && c_to_a_t < ca_len);
+
+			const vector3 auto intersection_a_to_b = add(a, mul(ab_dir, a_to_b_t));
+			const vector3 auto intersection_b_to_c = add(b, mul(bc_dir, b_to_c_t));
+			const vector3 auto intersection_c_to_a = add(c, mul(ca_dir, c_to_a_t));
+
+			const vector3 auto& triangle_tip  = (intersects_a_to_b && intersects_c_to_a) ? a : ((intersects_a_to_b && intersects_b_to_c) ? b : c);
+			const vector3 auto& any_other_tip = (intersects_a_to_b && intersects_c_to_a) ? b : ((intersects_a_to_b && intersects_b_to_c) ? c : a);
 
 			if(intersects_a_to_b || intersects_b_to_c || intersects_c_to_a)
 			{
-				const grh::vec3 	tip_to_tip 			= {triangle_tip.x - any_other_tip.x, triangle_tip.y - any_other_tip.y, triangle_tip.z - any_other_tip.z};
+				const vector3 auto	tip_to_tip			= sub(triangle_tip, any_other_tip);
 				const bool 			should_cut_to_quad 	= (tip_to_tip.x*plane_normal.x + tip_to_tip.y*plane_normal.y + tip_to_tip.z*plane_normal.z) < 0.0f;
-				const grh::vec3 	points[6] 			= { a, b, c, intersection_a_to_b, intersection_b_to_c, intersection_c_to_a};
+				const std::decay_t<decltype(a)> points[] = {a, b, c, intersection_a_to_b, intersection_b_to_c, intersection_c_to_a};
 
 				struct // NOLINT
 				{
@@ -658,15 +759,15 @@ static void clip(const Vec3& planePos, const Vec3& planeNormal, ViewSpaceFace bu
 
 				uint num_tris = indices.num_indices - 2;
 				assert(num_tris == 1 || num_tris == 2);
-				tri_in_out[0] = points[indices.indices[((0<<1u)+0u)&0b11u]];
-				tri_in_out[1] = points[indices.indices[((0<<1u)+1u)&0b11u]];
-				tri_in_out[2] = points[indices.indices[((0<<1u)+2u)&0b11u]];
+				get_tri_p0(tri_in_out) = points[indices.indices[((0<<1u)+0u)&0b11u]];
+				get_tri_p1(tri_in_out) = points[indices.indices[((0<<1u)+1u)&0b11u]];
+				get_tri_p2(tri_in_out) = points[indices.indices[((0<<1u)+2u)&0b11u]];
 
 				if(num_tris == 2)
 				{
-					tri_extra_out[0] = points[indices.indices[((1<<1u)+0u)&0b11u]];
-					tri_extra_out[1] = points[indices.indices[((1<<1u)+1u)&0b11u]];
-					tri_extra_out[2] = points[indices.indices[((1<<1u)+2u)&0b11u]];
+					get_tri_p0(tri_extra_out) = points[indices.indices[((1<<1u)+0u)&0b11u]];
+					get_tri_p1(tri_extra_out) = points[indices.indices[((1<<1u)+1u)&0b11u]];
+					get_tri_p2(tri_extra_out) = points[indices.indices[((1<<1u)+2u)&0b11u]];
 					return true;
 				}
 			}
@@ -796,7 +897,7 @@ static void clip(const Vec3& planePos, const Vec3& planeNormal, ViewSpaceFace bu
 		template<triangle TriangleType>
 		constexpr void draw_triangle(const TriangleType& source_triangle, std::array<grh::vec3, 3>& pts_screen_space, draw_horizontal_line_function<TriangleType> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 		{
-			draw_triangle<TriangleType>(source_triangle, pts_screen_space, draw_hline_function, frame_width, frame_height, 50u, 50u, (frame_width-50), (frame_height-50));
+			draw_triangle<TriangleType>(source_triangle, pts_screen_space, draw_hline_function, frame_width, frame_height, 1u, 1u, (frame_width-1), (frame_height-1));
 		}
 
 		constexpr grh::mat4x4 create_perspective(float fovy, float aspect, float z_near, float z_far)
@@ -819,45 +920,6 @@ static void clip(const Vec3& planePos, const Vec3& planeNormal, ViewSpaceFace bu
 			result[2][3] = 1.0f;
 			result[3][2] = - (2.0f * z_far * z_near) / (z_far - z_near);
 			//result[3][3] = 1.0f; maybe ?
-			return result;
-		}
-
-		template<vector3 Vec3Type>
-		constexpr Vec3Type normalize(Vec3Type v)
-		{
-			const auto l = static_cast<std::decay_t<decltype(v.x)>>(1) / std::sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
-			return {v.x / l, v.y / l, v.z / l};
-		}
-
-		template<vector3 Vec3Type>
-		constexpr Vec3Type cross(const Vec3Type& a, const Vec3Type& b)
-		{
-			return {a.b * b.z - b.b * a.z, a.z * b.a - b.z * a.a, a.a * b.b - b.a * a.b};
-		}
-
-		template<vector3 Vec3Type>
-		constexpr Vec3Type sub(const Vec3Type& a, const Vec3Type& b)
-		{
-			return {a.x - b.x, a.y - b.y, a.z - b.z};
-		}
-
-		constexpr grh::mat4x4 mul(const grh::mat4x4& m1, const grh::mat4x4& m2)
-		{
-			grh::mat4x4 result;
-			for(size_t k=0; k<4; k++) for(size_t i=0; i<4; i++)
-			{
-				result[k][i] = m1[0][i] * m2[k][0] + m1[1][i] * m2[k][1] + m1[2][i] * m2[k][2] + m1[3][i] * m2[k][3];
-			}
-			return result;
-		}
-
-		constexpr grh::vec4 mul(const grh::mat4x4& m1, const grh::vec4& m2)
-		{
-			grh::vec4 result = {};
-			result.x = m1[0][0] * m2.x + m1[1][0] * m2.y + m1[2][0] * m2.z + m1[3][0] * m2.w;
-			result.y = m1[0][1] * m2.x + m1[1][1] * m2.y + m1[2][1] * m2.z + m1[3][1] * m2.w;
-			result.z = m1[0][2] * m2.x + m1[1][2] * m2.y + m1[2][2] * m2.z + m1[3][2] * m2.w;
-			result.w = m1[0][3] * m2.x + m1[1][3] * m2.y + m1[2][3] * m2.z + m1[3][3] * m2.w;
 			return result;
 		}
 
@@ -888,50 +950,70 @@ static void clip(const Vec3& planePos, const Vec3& planeNormal, ViewSpaceFace bu
 		template<triangle_list TriangleList>
 		constexpr void render_rasterize(const TriangleList& triangles, const camera auto& camera, draw_horizontal_line_function<triangle_from_list_t<TriangleList>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 		{
+			using TriangleType = std::decay_t<decltype(*triangles.begin())>;
+
 			const float target_width_flt 	= static_cast<float>(frame_width);  // NOLINT
 			const float target_height_flt 	= static_cast<float>(frame_height); // NOLINT
 			const float aspect = target_width_flt / target_height_flt;
 
-			const grh::mat4x4 perspective 	= create_perspective(camera.fov, aspect, 0.1f, 100.0f);
+			const float near_plane 	= 1.1f;
+			const float far_plane 	= 100.0f;
+
+			const grh::mat4x4 perspective 	= create_perspective(camera.fov, aspect, near_plane, far_plane);
 			const grh::mat4x4 lookat 		= create_lookat(glm::vec3{camera.pos.x, camera.pos.y, camera.pos.z}, glm::vec3{camera.lookat.x, camera.lookat.y, camera.lookat.z}, glm::vec3{camera.up.x, camera.up.y, camera.up.z});
 			const grh::mat4x4 projview 		= mul(perspective, lookat);
 
+			const grh::vec3 near_clipping_plane_normal 	= direction_to(camera.pos, camera.lookat);
+			const grh::vec3 near_clipping_plane_pos 	= add(camera.pos, mul(near_clipping_plane_normal, near_plane));
+
 			for(const triangle auto& tri : triangles)
 			{
-				const grh::vec4 p0 = {tri.p0.x, tri.p0.y, tri.p0.z, 1};
-				const grh::vec4 p1 = {tri.p1.x, tri.p1.y, tri.p1.z, 1};
-				const grh::vec4 p2 = {tri.p2.x, tri.p2.y, tri.p2.z, 1};
+				std::array<TriangleType, 2> clipped_tris; // NOLINT
+				size_t num_clipped_tris = 0;
+				clipped_tris[num_clipped_tris++] = tri;
 
-				const grh::vec4 p0_projview = mul(projview, p0);
-				const grh::vec4 p1_projview = mul(projview, p1);
-				const grh::vec4 p2_projview = mul(projview, p2);
+				// clip near
+				num_clipped_tris += clip_triangle(near_clipping_plane_pos, near_clipping_plane_normal, clipped_tris[0], clipped_tris[1]);
 
-				assert(p0_projview.w != 0.0f);
-
-				std::array<grh::vec3, 3> pts; // NOLINT
-
-				pts[0].x = ((p0_projview.x / p0_projview.w) * 0.5f + 0.5f) * target_width_flt;
-				pts[0].y = ((p0_projview.y / p0_projview.w) * 0.5f + 0.5f) * target_height_flt;
-				pts[0].z = (p0_projview.z / p0_projview.w);
-
-				pts[1].x = ((p1_projview.x / p1_projview.w) * 0.5f + 0.5f) * target_width_flt;
-				pts[1].y = ((p1_projview.y / p1_projview.w) * 0.5f + 0.5f) * target_height_flt;
-				pts[1].z = (p1_projview.z / p1_projview.w);
-
-				pts[2].x = ((p2_projview.x / p2_projview.w) * 0.5f + 0.5f) * target_width_flt;
-				pts[2].y = ((p2_projview.y / p2_projview.w) * 0.5f + 0.5f) * target_height_flt;
-				pts[2].z = (p2_projview.z / p2_projview.w);
-
-				float cross_z = (pts[1].x - pts[0].x) * (pts[2].y - pts[0].y) - (pts[2].x - pts[0].x) * (pts[1].y - pts[0].y);
-				const bool backface_culling = cross_z > 0.0f;
-
-				if(backface_culling)
+				for(size_t clipped_tri_index=0; clipped_tri_index < num_clipped_tris; clipped_tri_index++)
 				{
-					if(pts[0].z > 0.0f || pts[1].z > 0.0f || pts[2].z > 0.0f)
-					{
-						draw_triangle(tri, pts, draw_hline_function, frame_width, frame_height);
-					}
+					const triangle auto& clipped_tri = clipped_tris[clipped_tri_index];
+					const grh::vec4 p0 = {clipped_tri.p0.x, clipped_tri.p0.y, clipped_tri.p0.z, 1};
+					const grh::vec4 p1 = {clipped_tri.p1.x, clipped_tri.p1.y, clipped_tri.p1.z, 1};
+					const grh::vec4 p2 = {clipped_tri.p2.x, clipped_tri.p2.y, clipped_tri.p2.z, 1};
+
+					const grh::vec4 p0_projview = mul(projview, p0);
+					const grh::vec4 p1_projview = mul(projview, p1);
+					const grh::vec4 p2_projview = mul(projview, p2);
+
+					assert(p0_projview.w != 0.0f);
+
+					std::array<grh::vec3, 3> pts; // NOLINT
+
+					pts[0].x = ((p0_projview.x / p0_projview.w) * 0.5f + 0.5f) * target_width_flt;
+					pts[0].y = ((p0_projview.y / p0_projview.w) * 0.5f + 0.5f) * target_height_flt;
+					pts[0].z = (p0_projview.z / p0_projview.w);
+
+					pts[1].x = ((p1_projview.x / p1_projview.w) * 0.5f + 0.5f) * target_width_flt;
+					pts[1].y = ((p1_projview.y / p1_projview.w) * 0.5f + 0.5f) * target_height_flt;
+					pts[1].z = (p1_projview.z / p1_projview.w);
+
+					pts[2].x = ((p2_projview.x / p2_projview.w) * 0.5f + 0.5f) * target_width_flt;
+					pts[2].y = ((p2_projview.y / p2_projview.w) * 0.5f + 0.5f) * target_height_flt;
+					pts[2].z = (p2_projview.z / p2_projview.w);
+
+					//float cross_z = (pts[1].x - pts[0].x) * (pts[2].y - pts[0].y) - (pts[2].x - pts[0].x) * (pts[1].y - pts[0].y);
+					//const bool backface_culling = cross_z > 0.0f;
+
+					//if(backface_culling)
+					//{
+						if(pts[0].z > 0.0f || pts[1].z > 0.0f || pts[2].z > 0.0f)
+						{
+							draw_triangle(clipped_tri, pts, draw_hline_function, frame_width, frame_height);
+						}
+					//}
 				}
+
 			}
 		}
 	}
