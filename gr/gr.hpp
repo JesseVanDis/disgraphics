@@ -439,7 +439,6 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 				const set_precalculated c = set_base(p0, p1);
 				// TODO: Set 'user_defined_it'
 				// TODO: Set 'user_defined'
-
 				/*
 				const user_defined_iterators_t it0 = p0;
 				user_defined_it = p1;
