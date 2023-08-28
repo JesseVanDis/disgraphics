@@ -61,6 +61,23 @@ namespace gr
 	template<triangle_list T>
 	using triangle_from_list_t = decltype(*std::declval<T>().begin());
 
+	template<size_t Index>
+	constexpr auto& get_tri_pt(triangle_by_fields auto& tri) requires (Index < 3)
+	{
+		if 		constexpr(Index == 0)	return tri.p0;
+		else if constexpr(Index == 1)	return tri.p1;
+		else							return tri.p2;
+	}
+
+	template<size_t Index>
+	constexpr auto& get_tri_pt(triangle_by_indices auto& tri) requires (Index < 3)
+	{
+		return tri[Index];
+	}
+
+	template<triangle T>
+	using vertex_from_tri_t = std::decay_t<decltype(get_tri_pt<0>(std::declval<T>()))>;
+
 	template<typename T>
 	concept camera = requires(T v)
 	{
@@ -77,7 +94,7 @@ namespace gr
 		{v.buffer_height} 	-> unsigned_integral;
 		{v.px_y} 			-> unsigned_integral;
 		{v.px_x_from} 		-> unsigned_integral;
-		{v.px_x_to} 		-> unsigned_integral;
+		{v.line_length_px} 	-> unsigned_integral;
 	};
 }
 
@@ -131,22 +148,24 @@ namespace gr
 	{
 		struct draw_horizontal_line_ctx_example
 		{
-			size_t buffer_width, buffer_height, px_y, px_x_from, px_x_to;
+			uint32_t buffer_width;
+			uint32_t buffer_height;
+			uint32_t px_y, px_x_from, line_length_px;
 		};
 		static_assert(draw_horizontal_line_ctx<draw_horizontal_line_ctx_example>);
 	}
 
-	template<typename FuncT, typename TriangleType>
+	template<typename FuncT, typename draw_ctx_t, typename triangle_type_t>
 	concept draw_horizontal_line_function = requires(FuncT v)
 	{
-		{v(std::declval<TriangleType>(), std::declval<draw_hline_ctx>())};
+		{v(std::declval<triangle_type_t>(), std::declval<draw_ctx_t>())};
 	};
 
-	template<typename IteratorCollection, triangle_list TriangleList>
-	constexpr void 	render(const TriangleList& triangles, const camera auto& camera, draw_horizontal_line_function<triangle_from_list_t<TriangleList>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height);
+	template<draw_horizontal_line_ctx draw_ctx_t, triangle_list triangle_list_t>
+	constexpr void 	render(const triangle_list_t& triangles, const camera auto& camera, draw_horizontal_line_function<draw_ctx_t, triangle_from_list_t<triangle_list_t>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height);
 
-	template<triangle_list TriangleList>
-	constexpr void 	render(const TriangleList& triangles, const camera auto& camera, draw_horizontal_line_function<triangle_from_list_t<TriangleList>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height);
+	template<triangle_list triangle_list_t>
+	constexpr void 	render_nonshaded(const triangle_list_t& triangles, const camera auto& camera, draw_horizontal_line_function<draw_hline_ctx, triangle_from_list_t<triangle_list_t>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height);
 }
 
 namespace gr::helpers
@@ -184,7 +203,6 @@ namespace gr
         };
 
 #if 0
-
         typedef struct {char StartVertIndex, EndVertIndex;CVec2f StartPoint, EndPoint;}SLine;
         typedef struct{int YStart, Height; float X, Xit, LYPerc, LYPercIt, R, Rit;}SLineIt;
 
@@ -331,105 +349,135 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			LeftEdge = &It.Tl2;
 	}
 }
-
 #endif
 
-		template<typename ...Iterators>
-		struct iterator_list
+		template<typename T>
+		concept line_custom_iterable = requires(T v)
 		{
+			{v.template get<0>()} 		-> std::same_as<float&>;
 		};
 
-		struct iterator_collection
+		template<typename vertex_t, typename T>
+		concept can_assign_vertex = requires(T v)
 		{
-			//void init(const vector3 auto& p0, const vector3 auto& p1, float one_over_height_ceiled)
-			//{
-			//
-			//}
-
-			template<typename Cb>
-			void for_each(Cb cb)
-			{
-
-			}
+			{v = std::declval<vertex_t>()} -> std::same_as<T&>;
 		};
 
-		struct z_iterator
+		template<typename draw_ctx_t>
+		concept has_user_defined_iterators = requires(draw_ctx_t v)
 		{
-			explicit z_iterator(const vector3 auto& v) : value(v.z){}
-			float value;
+			{v.begin} -> line_custom_iterable;
 		};
 
-		template<typename IteratorCollection>
-        struct line_it
-        {
+		struct line_it_base
+		{
 			int y_start, height;
 
 			float x_it, x;
 			float z_it, z;
 
-			IteratorCollection iterator_collection;
-
-			line_it& operator ++()
+			void increment_base()
 			{
 				x += x_it;
 				z += z_it;
-				iterator_collection.for_each([&](auto& v) { v.value += v.value_it; });
-				return *this;
 			}
-        };
+
+			struct set_precalculated
+			{
+				float y_start_ceiled, height_ceiled, one_over_height_ceiled, sub_pixel;
+			};
+
+			set_precalculated set_base(const vector3 auto& p0, const vector3 auto& p1)
+			{
+				set_precalculated c {
+					.y_start_ceiled 		= std::ceil(p0.y),
+					.height_ceiled 			= std::ceil(p1.y) - c.y_start_ceiled,
+					.one_over_height_ceiled = c.height_ceiled != 0.0f ? (1.0f / c.height_ceiled) : 0.0f,
+					.sub_pixel 				= c.y_start_ceiled - p0.y
+				};
+
+				//assert(height_ceiled != 0.0f); // this is going to be a division over 0 ! // TODO: handle this to avoid NaN
+
+				y_start    = static_cast<int>(c.y_start_ceiled);
+				height     = static_cast<int>(c.height_ceiled);
+				x_it 		= (p1.x - p0.x) * c.one_over_height_ceiled;
+				x			= p0.x + (x_it * c.sub_pixel);
+				z_it 		= (p1.z - p0.z) * c.one_over_height_ceiled;
+				z			= p0.z + (z_it * c.sub_pixel);
+
+				return c;
+			}
+		};
+
+		template<typename user_defined_iterators_t, typename enable = void>
+		struct line_it;
+
+		template<unsigned int index>
+		inline void add(line_custom_iterable auto& a, line_custom_iterable auto& b)
+		{
+			if constexpr(requires{a.template get<index>();})
+			{
+				(a.template get<index>()) += (b.template get<index>());
+				add<index+1>(a, b);
+			}
+		}
+
+		template<typename user_defined_iterators_t>
+		struct line_it<user_defined_iterators_t, std::enable_if_t<line_custom_iterable<user_defined_iterators_t>>> : line_it_base
+		{
+			user_defined_iterators_t user_defined;
+			user_defined_iterators_t user_defined_it;
+
+			void increment()
+			{
+				increment_base();
+				add<0>(user_defined, user_defined_it);
+			}
+
+			void set(const vector3 auto& p0, const vector3 auto& p1)
+			{
+				const set_precalculated c = set_base(p0, p1);
+				// TODO: Set 'user_defined_it'
+				// TODO: Set 'user_defined'
+
+				/*
+				const user_defined_iterators_t it0 = p0;
+				user_defined_it = p1;
+				user_defined_it -= it0;
+				user_defined_it *= c.one_over_height_ceiled;
+				user_defined = user_defined_it;
+				user_defined *= c.sub_pixel;
+				user_defined += it0;
+				 */
+			}
+		};
+
+		template<typename user_defined_iterators_t>
+        struct line_it<user_defined_iterators_t, std::enable_if_t<!line_custom_iterable<user_defined_iterators_t>>> : line_it_base
+        {
+			void increment()
+			{
+				increment_base();
+			}
+
+			void set(const vector3 auto& p0, const vector3 auto& p1)
+			{
+				set_base(p0, p1);
+			}
+		};
 
 		template<typename VecA, typename VecB>
 		using smallest_vec3_t = std::conditional_t<sizeof(VecA) < sizeof(VecB), VecA, VecB>;
 
-		template<typename IteratorCollection>
-		line_it<IteratorCollection> line_it_from_line(const vector3 auto& p0, const vector3 auto& p1)
-        {
-			const float y_start_ceiled 			= std::ceil(p0.y);
-			const float height_ceiled 			= std::ceil(p1.y) - y_start_ceiled;
-			const float one_over_height_ceiled 	= height_ceiled != 0.0f ? (1.0f / height_ceiled) : 0.0f;
-			const float sub_pixel 				= y_start_ceiled - p0.y;
-			//assert(height_ceiled != 0.0f); // this is going to be a division over 0 ! // TODO: handle this to avoid NaN
-
-            line_it<IteratorCollection> c {
-                    .y_start    = static_cast<int>(y_start_ceiled),
-                    .height     = static_cast<int>(height_ceiled),
-					.x_it 		= (p1.x - p0.x) * one_over_height_ceiled,
-					.x			= p0.x + (c.x_it * sub_pixel),
-					.z_it 		= (p1.z - p0.z) * one_over_height_ceiled,
-					.z			= p0.z + (c.z_it * sub_pixel)
-			};
-
-			c.iterator_collection.for_each([&](auto& v)
-			{
-				v.value_it 	= (v.field(p1) - v.field(p0)) * one_over_height_ceiled;
-				v.value		= v.field(p0) + (v.value_it * sub_pixel);
-			});
-
-			return c;
-		}
-
-		template<typename IteratorCollection>
-		constexpr inline int y_pos_at_intersection(int current_ypos, const line_it<IteratorCollection>& a, const line_it<IteratorCollection>& b)
+		template<draw_horizontal_line_ctx draw_ctx_t>
+		inline constexpr void check_context_validity(draw_ctx_t& ctx)
 		{
-			if(b.x_it - a.x_it == 0.0f)
-			{
-				return (current_ypos-1);
-			}
-			//assert((b.x_it - a.x_it) != 0.0f);
-			int lowest_y = std::min(a.y_start + a.height, b.y_start + b.height);
-			int calculatedIterationsLeft = static_cast<int>(std::floor((a.x - b.x) / (b.x_it - a.x_it)));
-			int y_limit = current_ypos + calculatedIterationsLeft;
-			return std::min(y_limit, lowest_y);
-		}
-
-		inline constexpr void check_context_validity(draw_hline_ctx& ctx)
-		{
-#if 0
+#if 1
 			int to = ctx.px_x_from + ctx.line_length_px;
 			assert(to 				>= ctx.px_x_from);
 			assert(ctx.px_y 		< ctx.buffer_height);
 			assert(ctx.px_x_from 	< ctx.buffer_width);
-			assert(ctx.px_x_to 		< ctx.buffer_width);
+			assert(to				< ctx.buffer_width);
 #else
 			ctx.px_y 			= std::min(ctx.px_y, (ctx.buffer_height-1));
 			ctx.px_x_from 		= std::min(ctx.px_x_from, (ctx.buffer_width-1));
@@ -437,10 +485,44 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 #endif
 		}
 
-		/// no bounds checking here!
-		template<typename IteratorCollection, triangle TriangleType>
-		constexpr void draw_triangle_unsafe(const TriangleType& source_triangle, std::array<grh::vec3, 3>& pts_screen_space, draw_horizontal_line_function<TriangleType> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
+		template<draw_horizontal_line_ctx draw_ctx_t, typename user_defined_iterators_t, triangle triangle_type_t>
+		constexpr inline void it_line(const triangle_type_t& source_triangle, draw_ctx_t& ctx, int y, line_it<user_defined_iterators_t>& left, line_it<user_defined_iterators_t>& right, draw_horizontal_line_function<draw_ctx_t, triangle_type_t> auto&& draw_hline_function)
 		{
+			ctx.px_y 			= y;
+			ctx.px_x_from 		= static_cast<int>(left.x);
+			ctx.line_length_px 	= static_cast<int>(right.x) - ctx.px_x_from;
+
+			check_context_validity(ctx);
+			draw_hline_function(source_triangle, ctx);
+
+			left.increment();
+			right.increment();
+		}
+
+		template<typename user_defined_iterators_t>
+		constexpr inline int y_pos_at_intersection(int current_ypos, const line_it<user_defined_iterators_t>& a, const line_it<user_defined_iterators_t>& b)
+		{
+			if(b.x_it - a.x_it == 0.0f)
+			{
+				return (current_ypos-1);
+			}
+			//assert((b.x_it - a.x_it) != 0.0f);
+			int lowest_y 		= std::min(a.y_start + a.height, b.y_start + b.height);
+			int iterations_left = static_cast<int>(std::floor((a.x - b.x) / (b.x_it - a.x_it)));
+			int y_limit 		= current_ypos + iterations_left;
+			return std::min(y_limit, lowest_y);
+		}
+
+		/// no bounds checking here!
+		template<draw_horizontal_line_ctx draw_ctx_t, triangle triangle_type_t>
+		constexpr void draw_triangle_unsafe(const triangle_type_t& source_triangle, std::array<grh::vec3, 3>& pts_screen_space, draw_horizontal_line_function<draw_ctx_t, triangle_type_t> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
+		{
+			using user_defined_iterators_t = std::conditional_t<has_user_defined_iterators<draw_ctx_t>, std::decay_t<decltype(std::declval<draw_ctx_t>().begin)>, std::nullptr_t>;
+			if constexpr(requires{std::declval<draw_ctx_t>().begin;})
+			{
+				static_assert(has_user_defined_iterators<draw_ctx_t>, "'begin' member found in 'draw_ctx_t' but does not satisfy the 'has_user_defined_iterators' conditions");
+			}
+
             struct line {const grh::vec3& p0, &p1;};
 
             std::sort(pts_screen_space.begin(), pts_screen_space.end(), [](const grh::vec3& a, const grh::vec3& b){return a.y < b.y;});
@@ -453,93 +535,65 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
             // check whether the long line is on the left or right
             float cross_z = (pts_screen_space[1].x - pts_screen_space[0].x) * (pts_screen_space[2].y - pts_screen_space[0].y) - (pts_screen_space[2].x - pts_screen_space[0].x) * (pts_screen_space[1].y - pts_screen_space[0].y);
 
-			draw_hline_ctx ctx; // NOLINT
+			draw_ctx_t ctx; // NOLINT
 			ctx.buffer_width = static_cast<uint32_t>(frame_width);
 			ctx.buffer_height = static_cast<uint32_t>(frame_height);
 
 			if(cross_z > 0.0f)
 			{
-				line_it<IteratorCollection> line_it_long = line_it_from_line<IteratorCollection>(line_long.p0, line_long.p1);
-				line_it<IteratorCollection> line_it_top  = line_it_from_line<IteratorCollection>(line_top.p0, line_top.p1);
-				line_it<IteratorCollection> line_it_bot  = line_it_from_line<IteratorCollection>(line_bot.p0, line_bot.p1);
+				line_it<user_defined_iterators_t> line_it_long, line_it_top, line_it_bot;
+
+				line_it_long.set(line_long.p0, line_long.p1);
+				line_it_top.set(line_top.p0, line_top.p1);
+				line_it_bot.set(line_bot.p0, line_bot.p1);
 
 				int y=line_it_long.y_start;
 				for(; y<line_it_long.y_start+line_it_top.height; y++)
 				{
-					ctx.px_y 			= y;
-					ctx.px_x_from 		= static_cast<int>(line_it_long.x);
-					ctx.line_length_px 	= static_cast<int>(line_it_top.x) - ctx.px_x_from;
-
-					check_context_validity(ctx);
-					draw_hline_function(source_triangle, ctx);
-
-					++line_it_long;
-					++line_it_top;
+					it_line(source_triangle, ctx, y, line_it_long, line_it_top, draw_hline_function);
 				}
 
 				const int yLimit = y_pos_at_intersection(y, line_it_long, line_it_bot);
 				for(; y<yLimit; y++)
 				{
-					ctx.px_y 			= y;
-					ctx.px_x_from 		= static_cast<int>(line_it_long.x);
-					ctx.line_length_px 	= static_cast<int>(line_it_bot.x) - ctx.px_x_from;
-
-					check_context_validity(ctx);
-					draw_hline_function(source_triangle, ctx);
-
-					++line_it_long;
-					++line_it_bot;
+					it_line(source_triangle, ctx, y, line_it_long, line_it_bot, draw_hline_function);
 				}
 			}
 			else
 			{
-				line_it line_it_long = line_it_from_line<IteratorCollection>(line_long.p0, line_long.p1);
-				line_it line_it_top  = line_it_from_line<IteratorCollection>(line_top.p0, line_top.p1);
-				line_it line_it_bot  = line_it_from_line<IteratorCollection>(line_bot.p0, line_bot.p1);
+				line_it<user_defined_iterators_t> line_it_long, line_it_top, line_it_bot;
+
+				line_it_long.set(line_long.p0, line_long.p1);
+				line_it_top.set(line_top.p0, line_top.p1);
+				line_it_bot.set(line_bot.p0, line_bot.p1);
 
 				int y=line_it_long.y_start;
 				for(; y<line_it_long.y_start+line_it_top.height; y++)
 				{
-					ctx.px_y 			= y;
-					ctx.px_x_from 		= static_cast<int>(line_it_top.x);
-					ctx.line_length_px 	= static_cast<int>(line_it_long.x) - ctx.px_x_from;
-
-					check_context_validity(ctx);
-					draw_hline_function(source_triangle, ctx);
-
-					++line_it_long;
-					++line_it_top;
+					it_line(source_triangle, ctx, y, line_it_top, line_it_long, draw_hline_function);
 				}
 
 				const int yLimit = y_pos_at_intersection(y, line_it_long, line_it_bot);
 				for(; y<yLimit; y++)
 				{
-					ctx.px_y 			= y;
-					ctx.px_x_from 		= static_cast<int>(line_it_bot.x);
-					ctx.line_length_px	= static_cast<int>(line_it_long.x) - ctx.px_x_from;
-
-					check_context_validity(ctx);
-					draw_hline_function(source_triangle, ctx);
-
-					++line_it_long;
-					++line_it_bot;
+					it_line(source_triangle, ctx, y, line_it_bot, line_it_long, draw_hline_function);
 				}
 			}
 		}
 
 		/// does not check for 0 division
-		template<vector3 Vec3Type>
-		constexpr Vec3Type normalize(const Vec3Type& v)
+		template<vector3 vector3_t>
+		constexpr vector3_t normalize(const vector3_t& v)
 		{
 			const auto l = static_cast<std::decay_t<decltype(v.x)>>(1) / std::sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
 			return {v.x / l, v.y / l, v.z / l};
 		}
 
 		/// does not check for 0 division
-		template<vector3 Vec3Type>
-		constexpr Vec3Type direction_to(const Vec3Type& from, const Vec3Type& to)
+		template<vector3 vector3_t>
+		constexpr vector3_t direction_to(const vector3_t& from, const vector3_t& to)
 		{
-			return normalize(Vec3Type{to.x - from.x, to.y - from.y, to.z - from.z});
+			return normalize(vector3_t{to.x - from.x, to.y - from.y, to.z - from.z});
 		}
 
 		/// does not check for 0 division
@@ -600,21 +654,6 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			result.z = m1[0][2] * m2.x + m1[1][2] * m2.y + m1[2][2] * m2.z + m1[3][2] * m2.w;
 			result.w = m1[0][3] * m2.x + m1[1][3] * m2.y + m1[2][3] * m2.z + m1[3][3] * m2.w;
 			return result;
-		}
-
-		template<size_t Index>
-		constexpr auto& get_tri_pt(triangle_by_fields auto& tri) requires (Index < 3)
-		{
-			if 		constexpr( Index == 0)		return tri.p0;
-			else if constexpr( Index == 1)		return tri.p1;
-			else if constexpr( Index == 2)		return tri.p2;
-			else								return tri.p0;
-		}
-
-		template<size_t Index>
-		constexpr auto& get_tri_pt(triangle_by_indices auto& tri) requires (Index < 3)
-		{
-			return tri[Index];
 		}
 
 		constexpr auto& get_tri_p0(triangle auto& tri) { return get_tri_pt<0>(tri); }
@@ -716,8 +755,8 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			return 0;
 		}
 
-		template<typename IteratorCollection, triangle TriangleType>
-		constexpr void draw_triangle(const TriangleType& source_triangle, std::array<grh::vec3, 3>& pts_screen_space, draw_horizontal_line_function<TriangleType> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height,
+		template<draw_horizontal_line_ctx draw_ctx_t, triangle triangle_type_t>
+		constexpr void draw_triangle(const triangle_type_t& source_triangle, std::array<grh::vec3, 3>& pts_screen_space, draw_horizontal_line_function<draw_ctx_t, triangle_type_t> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height,
 									 unsigned_integral auto viewport_x_start, unsigned_integral auto viewport_y_start, unsigned_integral auto viewport_x_end, unsigned_integral auto viewport_y_end)
 		{
 			// clipping on edges
@@ -828,14 +867,14 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			// draw
 			for(std::uint_fast8_t i=0; i<clipped_tris_num; i++)
 			{
-				draw_triangle_unsafe<IteratorCollection>(source_triangle, clipped_tris[i], draw_hline_function, frame_width, frame_height);
+				draw_triangle_unsafe<draw_ctx_t>(source_triangle, clipped_tris[i], draw_hline_function, frame_width, frame_height);
 			}
 		}
 
-		template<typename IteratorCollection, triangle TriangleType>
-		constexpr void draw_triangle(const TriangleType& source_triangle, std::array<grh::vec3, 3>& pts_screen_space, draw_horizontal_line_function<TriangleType> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
+		template<draw_horizontal_line_ctx draw_ctx_t, triangle triangle_type_t>
+		constexpr void draw_triangle(const triangle_type_t& source_triangle, std::array<grh::vec3, 3>& pts_screen_space, draw_horizontal_line_function<draw_ctx_t, triangle_type_t> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 		{
-			draw_triangle<IteratorCollection, TriangleType>(source_triangle, pts_screen_space, draw_hline_function, frame_width, frame_height, 1u, 1u, (frame_width-1), (frame_height-1));
+			draw_triangle<draw_ctx_t, triangle_type_t>(source_triangle, pts_screen_space, draw_hline_function, frame_width, frame_height, 1u, 1u, (frame_width-1), (frame_height-1));
 		}
 
 		constexpr grh::mat4x4 create_perspective(float fovy, float aspect, float z_near, float z_far)
@@ -861,12 +900,12 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			return result;
 		}
 
-		template<vector3 Vec3Type>
-		constexpr grh::mat4x4 create_lookat(const Vec3Type& eye, const Vec3Type& center, const Vec3Type& up)
+		template<vector3 vector3_t>
+		constexpr grh::mat4x4 create_lookat(const vector3_t& eye, const vector3_t& center, const vector3_t& up)
 		{
-			const Vec3Type f(normalize(sub_xyz(center,eye)));
-			const Vec3Type s(normalize(cross(up, f)));
-			const Vec3Type u(cross(f, s));
+			const vector3_t f(normalize(sub_xyz(center,eye)));
+			const vector3_t s(normalize(cross(up, f)));
+			const vector3_t u(cross(f, s));
 
 			grh::mat4x4 result = {};
 			result[0][0] = s.x;
@@ -885,10 +924,10 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			return result;
 		}
 
-		template<typename IteratorCollection, triangle_list TriangleList>
-		constexpr void render_rasterize(const TriangleList& triangles, const camera auto& camera, draw_horizontal_line_function<triangle_from_list_t<TriangleList>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
+		template<draw_horizontal_line_ctx draw_ctx_t, triangle_list triangle_list_t>
+		constexpr void render_rasterize(const triangle_list_t& triangles, const camera auto& camera, draw_horizontal_line_function<draw_ctx_t, triangle_from_list_t<triangle_list_t>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 		{
-			using TriangleType = std::decay_t<decltype(*triangles.begin())>;
+			using triangle_type_t = std::decay_t<decltype(*triangles.begin())>;
 
 			const float target_width_flt 	= static_cast<float>(frame_width);  // NOLINT
 			const float target_height_flt 	= static_cast<float>(frame_height); // NOLINT
@@ -906,7 +945,7 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 
 			for(const triangle auto& tri : triangles)
 			{
-				std::array<TriangleType, 2> clipped_tris; // NOLINT
+				std::array<triangle_type_t, 2> clipped_tris; // NOLINT
 				size_t num_clipped_tris = 0;
 				clipped_tris[num_clipped_tris++] = tri;
 
@@ -945,25 +984,32 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 
 					if(backface_culling)
 					{
-						draw_triangle<IteratorCollection, TriangleType>(clipped_tri, pts, draw_hline_function, frame_width, frame_height);
+						draw_triangle<draw_ctx_t, triangle_type_t>(clipped_tri, pts, draw_hline_function, frame_width, frame_height);
 					}
 				}
 			}
 		}
 	}
 
-	template<typename IteratorCollection, triangle_list TriangleList>
-	constexpr void 	render(const TriangleList& triangles, const camera auto& camera, draw_horizontal_line_function<triangle_from_list_t<TriangleList>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
+	template<draw_horizontal_line_ctx draw_ctx_t, triangle_list triangle_list_t>
+	constexpr void render(const triangle_list_t& triangles, const camera auto& camera, draw_horizontal_line_function<draw_ctx_t, triangle_from_list_t<triangle_list_t>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 	{
-		detail::render_rasterize(triangles, camera, draw_hline_function, frame_width, frame_height);
+		using triangle_t 				= triangle_from_list_t<triangle_list_t>;
+		using vertex_t					= vertex_from_tri_t<triangle_t>;
+		using user_defined_iterators_t 	= std::conditional_t<detail::has_user_defined_iterators<draw_ctx_t>, std::decay_t<decltype(std::declval<draw_ctx_t>().begin)>, std::nullptr_t>;
+		if constexpr(requires{std::declval<draw_ctx_t>().begin;})
+		{
+			static_assert(detail::can_assign_vertex<vertex_t, user_defined_iterators_t>, "'begin' member found in 'draw_ctx_t' cannot assign a tri to it");
+			static_assert(detail::has_user_defined_iterators<draw_ctx_t>, 				"'begin' member found in 'draw_ctx_t' but does not satisfy the 'has_user_defined_iterators' conditions");
+		}
+
+		detail::render_rasterize<draw_ctx_t>(triangles, camera, draw_hline_function, frame_width, frame_height);
 	}
 
-	struct dummy_iterator_collection { void for_each(auto){} };
-
-	template<triangle_list TriangleList>
-	constexpr void 	render(const TriangleList& triangles, const camera auto& camera, draw_horizontal_line_function<triangle_from_list_t<TriangleList>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
+	template<triangle_list triangle_list_t>
+	constexpr void render_nonshaded(const triangle_list_t& triangles, const camera auto& camera, draw_horizontal_line_function<draw_hline_ctx, triangle_from_list_t<triangle_list_t>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 	{
-		detail::render_rasterize<dummy_iterator_collection, TriangleList>(triangles, camera, draw_hline_function, frame_width, frame_height);
+		render<draw_hline_ctx, triangle_list_t>(triangles, camera, draw_hline_function, frame_width, frame_height);
 	}
 
 	namespace helpers
