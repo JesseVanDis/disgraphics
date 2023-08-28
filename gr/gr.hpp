@@ -62,17 +62,27 @@ namespace gr
 	using triangle_from_list_t = decltype(*std::declval<T>().begin());
 
 	template<size_t Index>
-	constexpr auto& get_tri_pt(triangle_by_fields auto& tri) requires (Index < 3)
+	constexpr auto& get_tri_pt(triangle auto& tri) requires (Index < 3)
 	{
-		if 		constexpr(Index == 0)	return tri.p0;
+		if constexpr(requires{tri[Index];})
+		{
+			return tri[Index];
+		}
+		else if	constexpr(Index == 0)	return tri.p0;
 		else if constexpr(Index == 1)	return tri.p1;
 		else							return tri.p2;
 	}
 
 	template<size_t Index>
-	constexpr auto& get_tri_pt(triangle_by_indices auto& tri) requires (Index < 3)
+	constexpr const auto& get_tri_pt(const triangle auto& tri) requires (Index < 3)
 	{
-		return tri[Index];
+		if constexpr(requires{tri[Index];})
+		{
+			return tri[Index];
+		}
+		else if	constexpr(Index == 0)	return tri.p0;
+		else if constexpr(Index == 1)	return tri.p1;
+		else							return tri.p2;
 	}
 
 	template<triangle T>
@@ -155,10 +165,10 @@ namespace gr
 		static_assert(draw_horizontal_line_ctx<draw_horizontal_line_ctx_example>);
 	}
 
-	template<typename FuncT, typename draw_ctx_t, typename triangle_type_t>
+	template<typename FuncT, typename draw_ctx_t, typename triangle_t>
 	concept draw_horizontal_line_function = requires(FuncT v)
 	{
-		{v(std::declval<triangle_type_t>(), std::declval<draw_ctx_t>())};
+		{v(std::declval<triangle_t>(), std::declval<draw_ctx_t>())};
 	};
 
 	template<draw_horizontal_line_ctx draw_ctx_t, triangle_list triangle_list_t>
@@ -369,6 +379,16 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			{v.begin} -> line_custom_iterable;
 		};
 
+		template<vector3 vertex_t>
+		struct screen_space_vertex
+		{
+			grh::vec3 screen_pos;
+			vertex_t  vertex;
+		};
+
+		template<triangle triangle_t>
+		using screen_space_triangle = std::array<screen_space_vertex<vertex_from_tri_t<triangle_t>>, 3>;
+
 		struct line_it_base
 		{
 			int y_start, height;
@@ -387,30 +407,28 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 				float y_start_ceiled, height_ceiled, one_over_height_ceiled, sub_pixel;
 			};
 
-			set_precalculated set_base(const vector3 auto& p0, const vector3 auto& p1)
+			template<vector3 vertex_t>
+			set_precalculated set_base(const screen_space_vertex<vertex_t>& p0, const screen_space_vertex<vertex_t>& p1)
 			{
 				set_precalculated c {
-					.y_start_ceiled 		= std::ceil(p0.y),
-					.height_ceiled 			= std::ceil(p1.y) - c.y_start_ceiled,
+					.y_start_ceiled 		= std::ceil(p0.screen_pos.y),
+					.height_ceiled 			= std::ceil(p1.screen_pos.y) - c.y_start_ceiled,
 					.one_over_height_ceiled = c.height_ceiled != 0.0f ? (1.0f / c.height_ceiled) : 0.0f,
-					.sub_pixel 				= c.y_start_ceiled - p0.y
+					.sub_pixel 				= c.y_start_ceiled - p0.screen_pos.y
 				};
 
 				//assert(height_ceiled != 0.0f); // this is going to be a division over 0 ! // TODO: handle this to avoid NaN
 
 				y_start    = static_cast<int>(c.y_start_ceiled);
 				height     = static_cast<int>(c.height_ceiled);
-				x_it 		= (p1.x - p0.x) * c.one_over_height_ceiled;
-				x			= p0.x + (x_it * c.sub_pixel);
-				z_it 		= (p1.z - p0.z) * c.one_over_height_ceiled;
-				z			= p0.z + (z_it * c.sub_pixel);
+				x_it 		= (p1.screen_pos.x - p0.screen_pos.x) * c.one_over_height_ceiled;
+				x			= p0.screen_pos.x + (x_it * c.sub_pixel);
+				z_it 		= (p1.screen_pos.z - p0.screen_pos.z) * c.one_over_height_ceiled;
+				z			= p0.screen_pos.z + (z_it * c.sub_pixel);
 
 				return c;
 			}
 		};
-
-		template<typename user_defined_iterators_t, typename enable = void>
-		struct line_it;
 
 		template<unsigned int index>
 		inline void add(line_custom_iterable auto& a, line_custom_iterable auto& b)
@@ -422,11 +440,44 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			}
 		}
 
+		struct UV
+		{
+			float u,v;
+		};
+
+		template<typename user_defined_iterators_t, typename enable = void>
+		struct line_it;
+
 		template<typename user_defined_iterators_t>
 		struct line_it<user_defined_iterators_t, std::enable_if_t<line_custom_iterable<user_defined_iterators_t>>> : line_it_base
 		{
 			user_defined_iterators_t user_defined;
 			user_defined_iterators_t user_defined_it;
+
+			float one_over_z;
+
+			UV p0_uv;
+			UV p1_uv;
+			UV p0_uv_over_z;
+
+			/*
+			const SVert& StartPoint = TriInfo.TriMesh.v[Line.StartVertIndex];
+			CVec2f UVOverZStart = CVec2f(StartPoint.uv.X, StartPoint.uv.Y) * OneOverZStart;
+
+			CEdgeStart EdgeStart;
+			const SVert& StartPoint = TriInfo.TriMesh.v[Line.StartVertIndex];
+			const SVert& EndPoint = TriInfo.TriMesh.v[Line.EndVertIndex];
+
+
+			float Z1 = StartPoint.p.Z, Z2 = EndPoint.p.Z;
+			float OneOverZStart = 1.0f / Z1, OneOverZEnd = 1.0f / Z2;
+			CVec2f UVOverZStart = CVec2f(StartPoint.uv.X, StartPoint.uv.Y) * OneOverZStart;
+			CVec2f UVOverZEnd = CVec2f(EndPoint.uv.X, EndPoint.uv.Y) * OneOverZEnd;
+			EdgeStart.Recalculate(OneOverZStart, OneOverZEnd, UVOverZStart, UVOverZEnd, Line.StartPoint, Line.EndPoint);
+
+			 UVOverZ = UVOverZStart
+			 */
+
 
 			void increment()
 			{
@@ -434,9 +485,26 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 				add<0>(user_defined, user_defined_it);
 			}
 
-			void set(const vector3 auto& p0, const vector3 auto& p1)
+			template<vector3 vertex_t>
+			void set(const screen_space_vertex<vertex_t>& p0, const screen_space_vertex<vertex_t>& p1)
 			{
 				const set_precalculated c = set_base(p0, p1);
+
+				one_over_z = 1.0f / p0.screen_pos.z;
+
+				p0_uv.u = p0.vertex.u;
+				p0_uv.v = p0.vertex.v;
+
+				p1_uv.u = p1.vertex.u;
+				p1_uv.v = p1.vertex.v;
+
+
+				const float over_over_z_start = 1.0f / p0.screen_pos.z;
+				const float over_over_z_end = 1.0f / p1.screen_pos.z;
+
+				p0_uv_over_z.u = p0_uv.u * over_over_z_start;
+				p0_uv_over_z.v = p0_uv.v * over_over_z_start;
+
 				// TODO: Set 'user_defined_it'
 				// TODO: Set 'user_defined'
 				/*
@@ -451,6 +519,275 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			}
 		};
 
+			/*
+			 inline CEdgeStart GetPrepairedStartingEdge(const SLine& Line, const STriangleInfo& TriInfo)
+{
+	CEdgeStart EdgeStart;
+	const SVert& StartPoint = TriInfo.TriMesh.v[Line.StartVertIndex];
+	const SVert& EndPoint = TriInfo.TriMesh.v[Line.EndVertIndex];
+
+
+	float Z1 = StartPoint.p.Z, Z2 = EndPoint.p.Z;
+	float OneOverZStart = 1.0f / Z1, OneOverZEnd = 1.0f / Z2;
+	CVec2f UVOverZStart = CVec2f(StartPoint.uv.X, StartPoint.uv.Y) * OneOverZStart;
+	CVec2f UVOverZEnd = CVec2f(EndPoint.uv.X, EndPoint.uv.Y) * OneOverZEnd;
+	EdgeStart.Recalculate(OneOverZStart, OneOverZEnd, UVOverZStart, UVOverZEnd, Line.StartPoint, Line.EndPoint);
+	return EdgeStart;
+}
+
+
+			 	STriangleSection ts;
+
+	ts.Buffer = Screen.mPixelBuffer;
+	ts.DepthBuffer = Screen.GetDepthBuffer();
+	ts.LeadingEdgeStart = Tri.LeadingEdgeStart;
+	ts.TopY = ts.LeadingEdgeStart.YStart;
+	ts.EndY = ts.TopY+ts.LeadingEdgeStart.Height;
+	ts.Pitch = Screen.mPitch;
+	ts.RemainingVertDirection = RemainingVertDirection;
+	ts.StartY = ts.TopY;
+	ts.TailingLineEdgeStart1 = Tri.TailingLineEdgeStart1;
+	ts.TailingLineEdgeStart2 = Tri.TailingLineEdgeStart2;
+	ts.TextureSize = sTextureList[sBindedTexture].TextSize;
+	ts.TextSizeXMin1 = ts.TextureSize.X-1;
+	ts.TextSizeYMin1 = ts.TextureSize.Y-1;
+	ts.TextureBuffer = (unsigned char*)sTextureList[sBindedTexture].TextBuffer;
+	ts.TextureSizeXf = (float)ts.TextureSize.X;
+	ts.TextureSizeYf = (float)ts.TextureSize.Y;
+	ts.EndX = (int)Tri.LeadingEdgeStart.EndPoint.X;
+
+	//AddRenderJob(ts);
+	ts.Draw();
+
+
+
+typedef struct
+{
+	int TopY;
+	int StartY, EndY, EndX;
+	float OneOverZEnd;
+	CEdgeStart LeadingEdgeStart;
+	CEdgeStart TailingLineEdgeStart1;
+	CEdgeStart TailingLineEdgeStart2;
+	int RemainingVertDirection;
+
+	float* DepthBuffer;
+	UInt* Buffer;
+	UInt Pitch;
+
+	float TextureSizeXf;
+	float TextureSizeYf;
+	CVec2i TextureSize;
+	int TextSizeXMin1;
+	int TextSizeYMin1;
+	unsigned char* TextureBuffer;
+	unsigned char* OrTextureBuffer;
+
+
+	inline void Draw()
+	{
+		unsigned char LocalTexBuffer[128*128];
+		OrTextureBuffer = TextureBuffer;
+		TextureBuffer = LocalTexBuffer;
+		memcpy(TextureBuffer, OrTextureBuffer, TextureSize.X * TextureSize.Y * 3);
+
+		CEdgeStart* RightEdge = NULL;
+		CEdgeStart* LeftEdge = NULL;
+		if(RemainingVertDirection > 0)
+		{
+			LeftEdge = TailingLineEdgeStart1.Height <= 0 ? &TailingLineEdgeStart2 : &TailingLineEdgeStart1;
+			RightEdge = &LeadingEdgeStart;
+		}
+		else
+		{
+			LeftEdge = &LeadingEdgeStart;
+			RightEdge = TailingLineEdgeStart1.Height <= 0 ? &TailingLineEdgeStart2 : &TailingLineEdgeStart1;
+		}
+
+		__m128 TextureSizeXf4 = _mm_set_ps1(TextureSizeXf);
+		__m128 TextureSizeYf4 = _mm_set_ps1(TextureSizeYf);
+		__m128i TextureSizeXi4 = _mm_set1_epi32(TextureSize.X);
+		__m128i TextureSizeYi4 = _mm_set1_epi32(TextureSize.Y);
+		__m128i TextSizeXMinOne4 = _mm_set1_epi32(TextSizeXMin1);
+		__m128i TextSizeYMinOne4 = _mm_set1_epi32(TextSizeYMin1);
+
+		int LeadingEdgeStartY = LeadingEdgeStart.YStart;
+
+		//if((*DepthBufferPos) < Z)
+
+		//float WidthLeading = ((float)EndX - LeadingEdgeStart.X);
+
+		//UInt BufferPosVert1 = LeadingEdgeStart.X + (LeadingEdgeStart.YStart *Pitch);
+		//UInt BufferPosVert2 = TailingLineEdgeStart2.X + (TailingLineEdgeStart2.YStart *Pitch);
+		//UInt BufferPosVert3 = EndX + (EndY *Pitch);
+		//float Vert1Z = 1.0f / LeadingEdgeStart.OneOverZ;
+		//float Vert2Z = 1.0f / TailingLineEdgeStart2.OneOverZ;
+		//float Vert3Z = 1.0f / TailingLineEdgeStart2.OneOverZ * TailingLineEdgeStart2.OneOverZIt * TailingLineEdgeStart2.Height;  //OneOverZEnd
+		//float* DepthBufferPosVert1 = &DepthBuffer[BufferPosVert1];
+		//float* DepthBufferPosVert2 = &DepthBuffer[BufferPosVert2];
+		//float* DepthBufferPosVert3 = &DepthBuffer[BufferPosVert3];
+
+
+		//if(((*DepthBufferPosVert1) > Vert1Z) && ((*DepthBufferPosVert2) > Vert2Z) && ((*DepthBufferPosVert3) > Vert3Z))
+		//return;
+
+		for(int Y=StartY; Y<EndY; ++Y)
+		{
+			int XLeft = (int)(LeftEdge->X);
+			int XRight = (int)(RightEdge->X);
+
+			float Width = RightEdge->X - LeftEdge->X;
+			float OneOverWidth = 1.0f / Width;
+
+			float	SubTexel = ((float)XLeft) - LeftEdge->X;
+
+			float OneOverZIt = (RightEdge->OneOverZ - LeftEdge->OneOverZ) * OneOverWidth;
+			float OneOverZItMul4 = OneOverZIt * 4.0f;
+			float OneOverZ = LeftEdge->OneOverZ + (OneOverZIt * SubTexel);
+
+			CVec2f UVOverZIt = (RightEdge->UVOverZ - LeftEdge->UVOverZ) * OneOverWidth;
+			CVec2f UVOverZItMul4 = (RightEdge->UVOverZ - LeftEdge->UVOverZ) * OneOverWidth * 4.0f;
+			CVec2f UVOverZ = LeftEdge->UVOverZ + (UVOverZIt * SubTexel);
+
+			// get buffer items
+			UInt BufferPos = XLeft + (Y*Pitch);
+			float* DepthBufferPos = &DepthBuffer[BufferPos];
+			UInt* CurrentBufferPos = &Buffer[BufferPos];
+
+
+
+			UInt LineWidth = XRight - XLeft;
+			UInt RAligned = (XLeft + LineWidth) - (LineWidth & 3);
+
+			//for(UInt X4 = XLeft; X4 < RAligned; X4+=4)
+			//{
+			//	// defaults
+			//	__m128 One4 = _mm_set_ps1(1.0f);
+			//	__m128i Three4 = _mm_set1_epi32(3);
+			//	__m128 OneOverZ4 = _mm_set_ps(OneOverZ + (OneOverZIt*3.0f), OneOverZ + (OneOverZIt*2.0f), OneOverZ + (OneOverZIt*1.0f), OneOverZ + (OneOverZIt*0.0f));
+			//	__m128 UVOverZ4x = _mm_set_ps(UVOverZ.X + (UVOverZIt.X*3.0f), UVOverZ.X + (UVOverZIt.X*2.0f), UVOverZ.X + (UVOverZIt.X*1.0f), UVOverZ.X + (UVOverZIt.X*0.0f));
+			//	__m128 UVOverZ4y = _mm_set_ps(UVOverZ.Y + (UVOverZIt.Y*3.0f), UVOverZ.Y + (UVOverZIt.Y*2.0f), UVOverZ.Y + (UVOverZIt.Y*1.0f), UVOverZ.Y + (UVOverZIt.Y*0.0f));
+
+			//	// calc. z
+			//	union{__m128 Z4; float Za[4];}; Z4 = _mm_div_ps(One4, OneOverZ4);
+
+			//	// calc. uv
+			//	union{__m128 u4; float Ua[4];}; u4 = _mm_mul_ps(Z4, UVOverZ4x);
+			//	union{__m128 v4; float Va[4];}; v4 = _mm_mul_ps(Z4, UVOverZ4y);
+
+			//	float* StartDept = DepthBufferPos;
+			//	union{__m128 d4; float Da[4];}; d4 = _mm_set_ps((*(DepthBufferPos+3)), (*(DepthBufferPos+2)), (*(DepthBufferPos+1)), (*(DepthBufferPos+0)));
+
+			//	// z read / write
+			//	union{__m128 OnTop4; float OnTopa[4]; UInt OnTopia[4];}; OnTop4 = _mm_cmplt_ps(d4, Z4);
+			//	__m128 z4And = _mm_and_ps(Z4, OnTop4);
+			//	union{__m128i m4i; __m128 m4f;}; m4i = _mm_set1_epi32(0xffffffff);
+			//	__m128 t = _mm_xor_ps(m4f, OnTop4);
+
+			//	d4 = _mm_and_ps(d4, t);
+			//	d4 = _mm_add_ps(d4, z4And);
+
+			//	// uv to texture point
+			//	union{__m128i tu4; UInt tua[4];};
+			//	union{__m128i tv4; UInt tva[4];};
+
+			//	//tu4 = _mm_and_si128(_mm_cvtps_epi32(_mm_mul_ps(u4, TextureSizeXf4)), TextSizeXMinOne4);
+			//	//tv4 = _mm_and_si128(_mm_cvtps_epi32(_mm_mul_ps(v4, TextureSizeYf4)), TextSizeYMinOne4);
+
+			//	for(UInt i=0; i<4; i++)
+			//	{
+			//		float u = Ua[i];
+			//		float v = Va[i];
+
+			//		UInt tu = (UInt)(u * TextureSizeXf);
+			//		UInt tv = (UInt)(v * TextureSizeYf);
+			//		tu = tu & TextSizeXMin1;
+			//		tv = tv & TextSizeYMin1;
+
+			//		tua[i] = tu;
+			//		tva[i] = tv;
+			//	}
+
+			//	// color from texture point
+			//	union{__m128i Addr4; UInt Addra[4];};
+			//	Addr4 = MulInts4(_mm_add_epi32(tu4, MulInts4(tv4, TextureSizeXi4)), Three4);
+			//	__m128i c4 = _mm_set_epi32(*((UInt*)&TextureBuffer[Addra[3]]), *((UInt*)&TextureBuffer[Addra[2]]), *((UInt*)&TextureBuffer[Addra[1]]), *((UInt*)&TextureBuffer[Addra[0]]));
+
+			//	union{__m128i r4; UInt ra[4];};
+			//	r4 = _mm_and_si128(c4, _mm_set1_epi32(0xffffff));
+
+			//	// write
+			//	memcpy(DepthBufferPos, &Da[0], sizeof(float) * 4);
+
+			//	if(OnTopia[0]) (*CurrentBufferPos) = ra[0];
+			//	if(OnTopia[1]) (*(CurrentBufferPos+1)) = ra[1];
+			//	if(OnTopia[2]) (*(CurrentBufferPos+2)) = ra[2];
+			//	if(OnTopia[3]) (*(CurrentBufferPos+3)) = ra[3];
+
+			//	OneOverZ += OneOverZItMul4;
+			//	UVOverZ.X += UVOverZItMul4.X;
+			//	UVOverZ.Y += UVOverZItMul4.Y;
+			//	CurrentBufferPos+=4;
+			//	DepthBufferPos+=4;
+			//}
+
+			//(*CurrentBufferPos) = 0xffffff;
+
+			//for(int X = RAligned; X <= XRight; ++X)
+			for(int X = XLeft; X <= XRight; ++X)
+			{
+				float Z = (1.0f/OneOverZ);
+
+				if((*DepthBufferPos) < Z)
+				{
+					float u = UVOverZ.X * Z;
+					float v = UVOverZ.Y * Z;
+					(*DepthBufferPos) = Z;
+
+
+					UInt tu = (UInt)(u * TextureSizeXf);
+					UInt tv = (UInt)(v * TextureSizeYf);
+					tu = tu & TextSizeXMin1;
+					tv = tv & TextSizeYMin1;
+
+					unsigned char* ptr = &(TextureBuffer[((tu + (tv*TextureSize.X)) * 3)]);
+					UInt c = *(UInt*)ptr;
+					c = c & 0xffffff;
+
+					(*CurrentBufferPos) = c;
+
+				}
+				OneOverZ += OneOverZIt;
+				UVOverZ.X += UVOverZIt.X;
+				UVOverZ.Y += UVOverZIt.Y;
+				CurrentBufferPos++;
+				DepthBufferPos++;
+			}
+
+			// interpolate
+			RightEdge->X += RightEdge->XIt;
+			LeftEdge->X += LeftEdge->XIt;
+			RightEdge->OneOverZ += RightEdge->OneOverZIt;
+			LeftEdge->OneOverZ += LeftEdge->OneOverZIt;
+			RightEdge->UVOverZ.X += RightEdge->UVOverZIt.X;
+			RightEdge->UVOverZ.Y += RightEdge->UVOverZIt.Y;
+			LeftEdge->UVOverZ.X += LeftEdge->UVOverZIt.X;
+			LeftEdge->UVOverZ.Y += LeftEdge->UVOverZIt.Y;
+
+			// swap loading edges if needed
+			if((Y-LeadingEdgeStartY) >= RightEdge->Height-1)
+				RightEdge = &TailingLineEdgeStart2;
+			if((Y-LeadingEdgeStartY) >= LeftEdge->Height-1)
+				LeftEdge = &TailingLineEdgeStart2;
+		}
+
+		TextureBuffer = OrTextureBuffer;
+	}
+}STriangleSection;
+
+			 */
+
+
 		template<typename user_defined_iterators_t>
         struct line_it<user_defined_iterators_t, std::enable_if_t<!line_custom_iterable<user_defined_iterators_t>>> : line_it_base
         {
@@ -459,7 +796,8 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 				increment_base();
 			}
 
-			void set(const vector3 auto& p0, const vector3 auto& p1)
+			template<vector3 vertex_t>
+			void set(const screen_space_vertex<vertex_t>& p0, const screen_space_vertex<vertex_t>& p1)
 			{
 				set_base(p0, p1);
 			}
@@ -484,14 +822,44 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 #endif
 		}
 
-		template<draw_horizontal_line_ctx draw_ctx_t, typename user_defined_iterators_t, triangle triangle_type_t>
-		constexpr inline void it_line(const triangle_type_t& source_triangle, draw_ctx_t& ctx, int y, line_it<user_defined_iterators_t>& left, line_it<user_defined_iterators_t>& right, draw_horizontal_line_function<draw_ctx_t, triangle_type_t> auto&& draw_hline_function)
+		template<draw_horizontal_line_ctx draw_ctx_t, typename user_defined_iterators_t, triangle triangle_t>
+		constexpr inline void it_line(const triangle_t& source_triangle, draw_ctx_t& ctx, int y, line_it<user_defined_iterators_t>& left, line_it<user_defined_iterators_t>& right, draw_horizontal_line_function<draw_ctx_t, triangle_t> auto&& draw_hline_function)
 		{
 			ctx.px_y 			= y;
 			ctx.px_x_from 		= static_cast<int>(left.x);
 			ctx.line_length_px 	= static_cast<int>(right.x) - ctx.px_x_from;
 
 			check_context_validity(ctx);
+
+			if constexpr(has_user_defined_iterators<draw_ctx_t>)
+			{
+				const float width = right.x - left.x;
+				const float one_over_width = 1.0f / width;
+				const float sub_texel = std::floor(left.x) - left.x;
+
+				const float one_over_z_it = (right.one_over_z - left.one_over_z) * one_over_width;
+				const float one_over_z 	= left.one_over_z + (one_over_z_it * sub_texel);
+
+				const UV uv_over_z_it 	= {(right.p0_uv_over_z.u - left.p0_uv_over_z.u) * one_over_width, (right.p0_uv_over_z.v - left.p0_uv_over_z.v) * one_over_width};
+				const UV uv_over_z 		= {left.p0_uv_over_z.u + (uv_over_z_it.u * sub_texel), left.p0_uv_over_z.v + (uv_over_z_it.v * sub_texel)};
+
+				const float z = (1.0f/one_over_z);
+
+				const float u = uv_over_z.u * z;
+				const float v = uv_over_z.v * z;
+
+				if constexpr(requires{ctx.one_over_z;})
+				{
+					ctx.one_over_z 		= one_over_z;
+					ctx.one_over_z_it 	= one_over_z_it;
+				}
+
+				ctx.begin.u = u;
+				ctx.begin.v = v;
+				ctx.it.u = uv_over_z_it.u;
+				ctx.it.v = uv_over_z_it.v;
+			}
+
 			draw_hline_function(source_triangle, ctx);
 
 			left.increment();
@@ -513,26 +881,29 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 		}
 
 		/// no bounds checking here!
-		template<draw_horizontal_line_ctx draw_ctx_t, triangle triangle_type_t>
-		constexpr void draw_triangle_unsafe(const triangle_type_t& source_triangle, std::array<grh::vec3, 3>& pts_screen_space, draw_horizontal_line_function<draw_ctx_t, triangle_type_t> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
+		template<draw_horizontal_line_ctx draw_ctx_t, triangle triangle_t>
+		constexpr void draw_triangle_unsafe(const triangle_t& source_triangle, screen_space_triangle<triangle_t>& triangle, draw_horizontal_line_function<draw_ctx_t, triangle_t> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 		{
+			using vertex_t = vertex_from_tri_t<triangle_t>;
+			using screen_space_vertex_t = screen_space_vertex<vertex_t>;
+
 			using user_defined_iterators_t = std::conditional_t<has_user_defined_iterators<draw_ctx_t>, std::decay_t<decltype(std::declval<draw_ctx_t>().begin)>, std::nullptr_t>;
 			if constexpr(requires{std::declval<draw_ctx_t>().begin;})
 			{
 				static_assert(has_user_defined_iterators<draw_ctx_t>, "'begin' member found in 'draw_ctx_t' but does not satisfy the 'has_user_defined_iterators' conditions");
 			}
 
-            struct line {const grh::vec3& p0, &p1;};
+            struct line {const screen_space_vertex_t& p0, &p1;};
 
-            std::sort(pts_screen_space.begin(), pts_screen_space.end(), [](const grh::vec3& a, const grh::vec3& b){return a.y < b.y;});
+            std::sort(triangle.begin(), triangle.end(), [](const screen_space_vertex_t& a, const screen_space_vertex_t& b){return a.screen_pos.y < b.screen_pos.y;});
 
             // take lines
-            const line line_long  = {pts_screen_space[0], pts_screen_space[2]};
-            const line line_top   = {pts_screen_space[0], pts_screen_space[1]};
-            const line line_bot   = {pts_screen_space[1], pts_screen_space[2]};
+            const line line_long  = {triangle[0], triangle[2]};
+            const line line_top   = {triangle[0], triangle[1]};
+            const line line_bot   = {triangle[1], triangle[2]};
 
             // check whether the long line is on the left or right
-            float cross_z = (pts_screen_space[1].x - pts_screen_space[0].x) * (pts_screen_space[2].y - pts_screen_space[0].y) - (pts_screen_space[2].x - pts_screen_space[0].x) * (pts_screen_space[1].y - pts_screen_space[0].y);
+            float cross_z = (triangle[1].screen_pos.x - triangle[0].screen_pos.x) * (triangle[2].screen_pos.y - triangle[0].screen_pos.y) - (triangle[2].screen_pos.x - triangle[0].screen_pos.x) * (triangle[1].screen_pos.y - triangle[0].screen_pos.y);
 
 			draw_ctx_t ctx; // NOLINT
 			ctx.buffer_width = static_cast<uint32_t>(frame_width);
@@ -671,11 +1042,18 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			return static_cast<decltype(denom)>(-1.0f);
 		}
 
-		constexpr int clip_triangle(const vector3 auto& plane_pos, const vector3 auto& plane_normal, triangle auto& tri_in_out, triangle auto& tri_extra_out)
+		//using vertex_t = vertex_from_tri_t<triangle_t>;
+		//using screen_space_vertex_t = screen_space_vertex<vertex_t>;
+		//constexpr auto tris_capacity = (2*2*2*2)+1;
+
+		//std::array<std::array<screen_space_vertex_t, 3>, tris_capacity>		clipped_tris; // NOLINT
+
+		template<triangle triangle_t>
+		constexpr int clip_triangle(const vector3 auto& plane_pos, const vector3 auto& plane_normal, screen_space_triangle<triangle_t>& tri_in_out, screen_space_triangle<triangle_t>& tri_extra_out)
 		{
-			const vector3 auto& a = get_tri_p0(tri_in_out);
-			const vector3 auto& b = get_tri_p1(tri_in_out);
-			const vector3 auto& c = get_tri_p2(tri_in_out);
+			const vector3 auto& a = tri_in_out[0].screen_pos;
+			const vector3 auto& b = tri_in_out[1].screen_pos;
+			const vector3 auto& c = tri_in_out[2].screen_pos;
 
 			const vector3 auto ab = sub_xyz(b, a);
 			const vector3 auto bc = sub_xyz(c, b);
@@ -735,15 +1113,15 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 
 				uint num_tris = indices.num_indices - 2;
 				assert(num_tris == 1 || num_tris == 2);
-				get_tri_p0(tri_in_out) = points[indices.indices[((0<<1u)+0u)&0b11u]];
-				get_tri_p1(tri_in_out) = points[indices.indices[((0<<1u)+1u)&0b11u]];
-				get_tri_p2(tri_in_out) = points[indices.indices[((0<<1u)+2u)&0b11u]];
+				tri_in_out[0].screen_pos = points[indices.indices[((0<<1u)+0u)&0b11u]];
+				tri_in_out[1].screen_pos = points[indices.indices[((0<<1u)+1u)&0b11u]];
+				tri_in_out[2].screen_pos = points[indices.indices[((0<<1u)+2u)&0b11u]];
 
 				if(num_tris == 2)
 				{
-					get_tri_p0(tri_extra_out) = points[indices.indices[((1<<1u)+0u)&0b11u]];
-					get_tri_p1(tri_extra_out) = points[indices.indices[((1<<1u)+1u)&0b11u]];
-					get_tri_p2(tri_extra_out) = points[indices.indices[((1<<1u)+2u)&0b11u]];
+					tri_extra_out[0].screen_pos = points[indices.indices[((1<<1u)+0u)&0b11u]];
+					tri_extra_out[1].screen_pos = points[indices.indices[((1<<1u)+1u)&0b11u]];
+					tri_extra_out[2].screen_pos = points[indices.indices[((1<<1u)+2u)&0b11u]];
 					return 1;
 				}
 			}
@@ -754,17 +1132,21 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			return 0;
 		}
 
-		template<draw_horizontal_line_ctx draw_ctx_t, triangle triangle_type_t>
-		constexpr void draw_triangle(const triangle_type_t& source_triangle, std::array<grh::vec3, 3>& pts_screen_space, draw_horizontal_line_function<draw_ctx_t, triangle_type_t> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height,
+		template<draw_horizontal_line_ctx draw_ctx_t, triangle triangle_t>
+		constexpr void draw_triangle(const triangle_t& source_triangle, const screen_space_triangle<triangle_t>& triangle, draw_horizontal_line_function<draw_ctx_t, triangle_t> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height,
 									 unsigned_integral auto viewport_x_start, unsigned_integral auto viewport_y_start, unsigned_integral auto viewport_x_end, unsigned_integral auto viewport_y_end)
 		{
 			// clipping on edges
 
-			std::array<std::array<grh::vec3, 3>, (2*2*2*2)+1> 	clipped_tris; // NOLINT
-			std::uint_fast8_t 									clipped_tris_num = 0;
+			using vertex_t = vertex_from_tri_t<triangle_t>;
+			using screen_space_vertex_t = screen_space_vertex<vertex_t>;
+			constexpr auto tris_capacity = (2*2*2*2)+1;
+
+			std::array<std::array<screen_space_vertex_t, 3>, tris_capacity>		clipped_tris; // NOLINT
+			std::uint_fast8_t 													clipped_tris_num = 0;
 
 			// first just add the main triangle
-			clipped_tris[clipped_tris_num++] = pts_screen_space;
+			clipped_tris[clipped_tris_num++] = triangle;
 
 			// clipping planes
 			// top clipping plane
@@ -774,9 +1156,9 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 
 				for(std::uint_fast8_t i=clipped_tris_num; i--;)
 				{
-					std::array<grh::vec3, 3>& tri = clipped_tris[i];
+					std::array<screen_space_vertex_t, 3>& tri = clipped_tris[i];
 
-					const bool 					in_screen[3] 		= {tri[0].y < viewport_y_end, tri[1].y < viewport_y_end, tri[2].y < viewport_y_end};
+					const bool 					in_screen[3] 		= {tri[0].screen_pos.y < viewport_y_end, tri[1].screen_pos.y < viewport_y_end, tri[2].screen_pos.y < viewport_y_end};
 					const std::uint_fast8_t 	num_pts_in_screen 	= in_screen[0] + in_screen[1] + in_screen[2];
 
 					if(num_pts_in_screen == 0) // not in screen. delete
@@ -786,7 +1168,7 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 					}
 					else if(num_pts_in_screen != 3) // otherwise nothing to clip. leave it
 					{
-						clipped_tris_num += clip_triangle(o, n, tri, clipped_tris[clipped_tris_num]);
+						clipped_tris_num += clip_triangle<triangle_t>(o, n, tri, clipped_tris[clipped_tris_num]);
 					}
 				}
 			}
@@ -798,9 +1180,9 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 
 				for(std::uint_fast8_t i=clipped_tris_num; i--;)
 				{
-					std::array<grh::vec3, 3>& tri = clipped_tris[i];
+					std::array<screen_space_vertex_t, 3>& tri = clipped_tris[i];
 
-					const bool 					in_screen[3] 		= {tri[0].y > viewport_y_start, tri[1].y > viewport_y_start, tri[2].y > viewport_y_start};
+					const bool 					in_screen[3] 		= {tri[0].screen_pos.y > viewport_y_start, tri[1].screen_pos.y > viewport_y_start, tri[2].screen_pos.y > viewport_y_start};
 					const std::uint_fast8_t 	num_pts_in_screen 	= in_screen[0] + in_screen[1] + in_screen[2];
 
 					if(num_pts_in_screen == 0) // not in screen. delete
@@ -810,7 +1192,7 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 					}
 					else if(num_pts_in_screen != 3) // otherwise nothing to clip. leave it
 					{
-						clipped_tris_num += clip_triangle(o, n, tri, clipped_tris[clipped_tris_num]);
+						clipped_tris_num += clip_triangle<triangle_t>(o, n, tri, clipped_tris[clipped_tris_num]);
 					}
 				}
 			}
@@ -822,9 +1204,9 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 
 				for(std::uint_fast8_t i=clipped_tris_num; i--;)
 				{
-					std::array<grh::vec3, 3>& tri = clipped_tris[i];
+					std::array<screen_space_vertex_t, 3>& tri = clipped_tris[i];
 
-					const bool 					in_screen[3] 		= {tri[0].x > viewport_x_start, tri[1].x > viewport_x_start, tri[2].x > viewport_x_start};
+					const bool 					in_screen[3] 		= {tri[0].screen_pos.x > viewport_x_start, tri[1].screen_pos.x > viewport_x_start, tri[2].screen_pos.x > viewport_x_start};
 					const std::uint_fast8_t 	num_pts_in_screen 	= in_screen[0] + in_screen[1] + in_screen[2];
 
 					if(num_pts_in_screen == 0) // not in screen. delete
@@ -834,7 +1216,7 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 					}
 					else if(num_pts_in_screen != 3) // otherwise nothing to clip. leave it
 					{
-						clipped_tris_num += clip_triangle(o, n, tri, clipped_tris[clipped_tris_num]);
+						clipped_tris_num += clip_triangle<triangle_t>(o, n, tri, clipped_tris[clipped_tris_num]);
 					}
 				}
 			}
@@ -846,9 +1228,9 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 
 				for(std::uint_fast8_t i=clipped_tris_num; i--;)
 				{
-					std::array<grh::vec3, 3>& tri = clipped_tris[i];
+					std::array<screen_space_vertex_t, 3>& tri = clipped_tris[i];
 
-					const bool 					in_screen[3] 		= {tri[0].x < viewport_x_end, tri[1].x < viewport_x_end, tri[2].x < viewport_x_end};
+					const bool 					in_screen[3] 		= {tri[0].screen_pos.x < viewport_x_end, tri[1].screen_pos.x < viewport_x_end, tri[2].screen_pos.x < viewport_x_end};
 					const std::uint_fast8_t 	num_pts_in_screen 	= in_screen[0] + in_screen[1] + in_screen[2];
 
 					if(num_pts_in_screen == 0) // not in screen. delete
@@ -858,7 +1240,7 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 					}
 					else if(num_pts_in_screen != 3) // otherwise nothing to clip. leave it
 					{
-						clipped_tris_num += clip_triangle(o, n, tri, clipped_tris[clipped_tris_num]);
+						clipped_tris_num += clip_triangle<triangle_t>(o, n, tri, clipped_tris[clipped_tris_num]);
 					}
 				}
 			}
@@ -870,10 +1252,10 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			}
 		}
 
-		template<draw_horizontal_line_ctx draw_ctx_t, triangle triangle_type_t>
-		constexpr void draw_triangle(const triangle_type_t& source_triangle, std::array<grh::vec3, 3>& pts_screen_space, draw_horizontal_line_function<draw_ctx_t, triangle_type_t> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
+		template<draw_horizontal_line_ctx draw_ctx_t, triangle triangle_t>
+		constexpr void draw_triangle(const triangle_t& source_triangle, const screen_space_triangle<triangle_t>& triangle, draw_horizontal_line_function<draw_ctx_t, triangle_t> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 		{
-			draw_triangle<draw_ctx_t, triangle_type_t>(source_triangle, pts_screen_space, draw_hline_function, frame_width, frame_height, 1u, 1u, (frame_width-1), (frame_height-1));
+			draw_triangle<draw_ctx_t, triangle_t>(source_triangle, triangle, draw_hline_function, frame_width, frame_height, 1u, 1u, (frame_width-1), (frame_height-1));
 		}
 
 		constexpr grh::mat4x4 create_perspective(float fovy, float aspect, float z_near, float z_far)
@@ -926,7 +1308,7 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 		template<draw_horizontal_line_ctx draw_ctx_t, triangle_list triangle_list_t>
 		constexpr void render_rasterize(const triangle_list_t& triangles, const camera auto& camera, draw_horizontal_line_function<draw_ctx_t, triangle_from_list_t<triangle_list_t>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 		{
-			using triangle_type_t = std::decay_t<decltype(*triangles.begin())>;
+			using triangle_t 			= std::decay_t<decltype(*triangles.begin())>;
 
 			const float target_width_flt 	= static_cast<float>(frame_width);  // NOLINT
 			const float target_height_flt 	= static_cast<float>(frame_height); // NOLINT
@@ -944,19 +1326,45 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 
 			for(const triangle auto& tri : triangles)
 			{
-				std::array<triangle_type_t, 2> clipped_tris; // NOLINT
+				std::array<screen_space_triangle<triangle_t>, 2> clipped_tris; // NOLINT
 				size_t num_clipped_tris = 0;
-				clipped_tris[num_clipped_tris++] = tri;
+
+				clipped_tris[0][0].vertex = get_tri_pt<0>(tri);
+				clipped_tris[0][1].vertex = get_tri_pt<1>(tri);
+				clipped_tris[0][2].vertex = get_tri_pt<2>(tri);
+				clipped_tris[0][0].screen_pos = {clipped_tris[0][0].vertex.x, clipped_tris[0][0].vertex.y, clipped_tris[0][0].vertex.z};
+				clipped_tris[0][1].screen_pos = {clipped_tris[0][1].vertex.x, clipped_tris[0][1].vertex.y, clipped_tris[0][1].vertex.z};
+				clipped_tris[0][2].screen_pos = {clipped_tris[0][2].vertex.x, clipped_tris[0][2].vertex.y, clipped_tris[0][2].vertex.z};
+				num_clipped_tris++;
 
 				// clip near
-				num_clipped_tris += clip_triangle(near_clipping_plane_pos, near_clipping_plane_normal, clipped_tris[0], clipped_tris[1]);
+				num_clipped_tris += clip_triangle<triangle_t>(near_clipping_plane_pos, near_clipping_plane_normal, clipped_tris[0], clipped_tris[1]);
 
 				for(size_t clipped_tri_index=0; clipped_tri_index < num_clipped_tris; clipped_tri_index++)
 				{
-					const triangle auto& clipped_tri = clipped_tris[clipped_tri_index];
-					const grh::vec4 p0 = {clipped_tri.p0.x, clipped_tri.p0.y, clipped_tri.p0.z, 1};
-					const grh::vec4 p1 = {clipped_tri.p1.x, clipped_tri.p1.y, clipped_tri.p1.z, 1};
-					const grh::vec4 p2 = {clipped_tri.p2.x, clipped_tri.p2.y, clipped_tri.p2.z, 1};
+					screen_space_triangle<triangle_t>& clipped_tris_result = clipped_tris[clipped_tri_index];
+
+					// officially the below should be done, but clip is not ready for this yet ( it only clips on 'screen_pos' level )
+#if 0
+					get_tri_pt<0>(clipped_tri) = clipped_tris_result[0].vertex;
+					get_tri_pt<1>(clipped_tri) = clipped_tris_result[1].vertex;
+					get_tri_pt<2>(clipped_tri) = clipped_tris_result[2].vertex;
+#else
+					triangle_t clipped_tri = tri;
+					get_tri_pt<0>(clipped_tri).x = clipped_tris_result[0].screen_pos.x;
+					get_tri_pt<0>(clipped_tri).y = clipped_tris_result[0].screen_pos.y;
+					get_tri_pt<0>(clipped_tri).z = clipped_tris_result[0].screen_pos.z;
+					get_tri_pt<1>(clipped_tri).x = clipped_tris_result[1].screen_pos.x;
+					get_tri_pt<1>(clipped_tri).y = clipped_tris_result[1].screen_pos.y;
+					get_tri_pt<1>(clipped_tri).z = clipped_tris_result[1].screen_pos.z;
+					get_tri_pt<2>(clipped_tri).x = clipped_tris_result[2].screen_pos.x;
+					get_tri_pt<2>(clipped_tri).y = clipped_tris_result[2].screen_pos.y;
+					get_tri_pt<2>(clipped_tri).z = clipped_tris_result[2].screen_pos.z;
+#endif
+
+					const grh::vec4 p0 = {get_tri_pt<0>(clipped_tri).x, get_tri_pt<0>(clipped_tri).y, get_tri_pt<0>(clipped_tri).z, 1};
+					const grh::vec4 p1 = {get_tri_pt<1>(clipped_tri).x, get_tri_pt<1>(clipped_tri).y, get_tri_pt<1>(clipped_tri).z, 1};
+					const grh::vec4 p2 = {get_tri_pt<2>(clipped_tri).x, get_tri_pt<2>(clipped_tri).y, get_tri_pt<2>(clipped_tri).z, 1};
 
 					const grh::vec4 p0_projview = mul(projview, p0);
 					const grh::vec4 p1_projview = mul(projview, p1);
@@ -964,26 +1372,24 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 
 					assert(p0_projview.w != 0.0f);
 
-					std::array<grh::vec3, 3> pts; // NOLINT
+					clipped_tris_result[0].screen_pos.x = ((p0_projview.x / p0_projview.w) * 0.5f + 0.5f) * target_width_flt;
+					clipped_tris_result[0].screen_pos.y = ((p0_projview.y / p0_projview.w) * 0.5f + 0.5f) * target_height_flt;
+					clipped_tris_result[0].screen_pos.z = (p0_projview.z / p0_projview.w);
 
-					pts[0].x = ((p0_projview.x / p0_projview.w) * 0.5f + 0.5f) * target_width_flt;
-					pts[0].y = ((p0_projview.y / p0_projview.w) * 0.5f + 0.5f) * target_height_flt;
-					pts[0].z = (p0_projview.z / p0_projview.w);
+					clipped_tris_result[1].screen_pos.x = ((p1_projview.x / p1_projview.w) * 0.5f + 0.5f) * target_width_flt;
+					clipped_tris_result[1].screen_pos.y = ((p1_projview.y / p1_projview.w) * 0.5f + 0.5f) * target_height_flt;
+					clipped_tris_result[1].screen_pos.z = (p1_projview.z / p1_projview.w);
 
-					pts[1].x = ((p1_projview.x / p1_projview.w) * 0.5f + 0.5f) * target_width_flt;
-					pts[1].y = ((p1_projview.y / p1_projview.w) * 0.5f + 0.5f) * target_height_flt;
-					pts[1].z = (p1_projview.z / p1_projview.w);
+					clipped_tris_result[2].screen_pos.x = ((p2_projview.x / p2_projview.w) * 0.5f + 0.5f) * target_width_flt;
+					clipped_tris_result[2].screen_pos.y = ((p2_projview.y / p2_projview.w) * 0.5f + 0.5f) * target_height_flt;
+					clipped_tris_result[2].screen_pos.z = (p2_projview.z / p2_projview.w);
 
-					pts[2].x = ((p2_projview.x / p2_projview.w) * 0.5f + 0.5f) * target_width_flt;
-					pts[2].y = ((p2_projview.y / p2_projview.w) * 0.5f + 0.5f) * target_height_flt;
-					pts[2].z = (p2_projview.z / p2_projview.w);
-
-					float cross_z = (pts[1].x - pts[0].x) * (pts[2].y - pts[0].y) - (pts[2].x - pts[0].x) * (pts[1].y - pts[0].y);
+					const float cross_z = (clipped_tris_result[1].screen_pos.x - clipped_tris_result[0].screen_pos.x) * (clipped_tris_result[2].screen_pos.y - clipped_tris_result[0].screen_pos.y) - (clipped_tris_result[2].screen_pos.x - clipped_tris_result[0].screen_pos.x) * (clipped_tris_result[1].screen_pos.y - clipped_tris_result[0].screen_pos.y);
 					const bool backface_culling = cross_z > 0.0f;
 
 					if(backface_culling)
 					{
-						draw_triangle<draw_ctx_t, triangle_type_t>(clipped_tri, pts, draw_hline_function, frame_width, frame_height);
+						draw_triangle<draw_ctx_t, triangle_t>(tri, clipped_tris_result, draw_hline_function, frame_width, frame_height);
 					}
 				}
 			}
