@@ -26,6 +26,9 @@ CPMAddPackage(
 include_directories("${glfw_SOURCE_DIR}/include")
 include_directories("${glm_SOURCE_DIR}")
 
+# CrossWindow ( TODO Remove glfw as it depends on GL, and use 'CrossWindow' instead )
+CPMAddPackage("gh:alaingalvan/CrossWindow#5f744aa904d78fc43650f6efb01976b9561f628a")
+
 file(GLOB sources *.c *.cpp)
 
 add_executable(disgraphics_example_shading ${sources})
