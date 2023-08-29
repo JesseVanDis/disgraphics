@@ -6,7 +6,7 @@
 #include <memory>
 #include <span>
 
-namespace gr
+namespace dis
 {
 	template<typename T>
 	concept floating_point = std::floating_point<std::decay_t<T>>;
@@ -108,7 +108,7 @@ namespace gr
 	};
 }
 
-namespace gr::helpers
+namespace dis::helpers
 {
 	struct vec2
 	{
@@ -142,9 +142,9 @@ namespace gr::helpers
 
 	using mat4x4 = std::array<std::array<float, 4>, 4>;
 }
-namespace grh = gr::helpers;
+namespace dish = dis::helpers;
 
-namespace gr
+namespace dis
 {
 
 	struct draw_hline_ctx
@@ -178,7 +178,7 @@ namespace gr
 	constexpr void 	render_nonshaded(const triangle_list_t& triangles, const camera auto& camera, draw_horizontal_line_function<draw_hline_ctx, triangle_from_list_t<triangle_list_t>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height);
 }
 
-namespace gr::helpers
+namespace dis::helpers
 {
 	constexpr cam					lookat(const vector3 auto& pos, const vector3 auto& lookat, const vector3 auto& up, const std::floating_point auto& fov = 2.0f);
 }
@@ -193,7 +193,7 @@ namespace gr::helpers
 #define HAS_GCEM
 #endif
 
-namespace gr
+namespace dis
 {
 	namespace detail
 	{
@@ -208,8 +208,8 @@ namespace gr
 	{
         struct line
         {
-            const grh::vec3& p0;
-            const grh::vec3& p1;
+            const dish::vec3& p0;
+            const dish::vec3& p1;
         };
 
 #if 0
@@ -382,7 +382,7 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 		template<vector3 vertex_t>
 		struct screen_space_vertex
 		{
-			grh::vec3 screen_pos;
+			dish::vec3 screen_pos;
 			vertex_t  vertex;
 		};
 
@@ -972,7 +972,7 @@ typedef struct
 			return std::sqrt(vec.x*vec.x + vec.y*vec.y + vec.z*vec.z);
 		}
 
-		constexpr grh::vec3 cross_xyz(const vector3 auto& a, const vector3 auto& b)
+		constexpr dish::vec3 cross_xyz(const vector3 auto& a, const vector3 auto& b)
 		{
 			return {a.b * b.z - b.b * a.z, a.z * b.a - b.z * a.a, a.a * b.b - b.a * a.b};
 		}
@@ -1006,9 +1006,9 @@ typedef struct
 			return {a.x * b, a.y * b, a.z * b};
 		}
 
-		constexpr grh::mat4x4 mul(const grh::mat4x4& m1, const grh::mat4x4& m2)
+		constexpr dish::mat4x4 mul(const dish::mat4x4& m1, const dish::mat4x4& m2)
 		{
-			grh::mat4x4 result;
+			dish::mat4x4 result;
 			for(size_t k=0; k<4; k++) for(size_t i=0; i<4; i++)
 				{
 					result[k][i] = m1[0][i] * m2[k][0] + m1[1][i] * m2[k][1] + m1[2][i] * m2[k][2] + m1[3][i] * m2[k][3];
@@ -1016,9 +1016,9 @@ typedef struct
 			return result;
 		}
 
-		constexpr grh::vec4 mul(const grh::mat4x4& m1, const grh::vec4& m2)
+		constexpr dish::vec4 mul(const dish::mat4x4& m1, const dish::vec4& m2)
 		{
-			grh::vec4 result = {};
+			dish::vec4 result = {};
 			result.x = m1[0][0] * m2.x + m1[1][0] * m2.y + m1[2][0] * m2.z + m1[3][0] * m2.w;
 			result.y = m1[0][1] * m2.x + m1[1][1] * m2.y + m1[2][1] * m2.z + m1[3][1] * m2.w;
 			result.z = m1[0][2] * m2.x + m1[1][2] * m2.y + m1[2][2] * m2.z + m1[3][2] * m2.w;
@@ -1108,10 +1108,10 @@ typedef struct
 								{ { 2, 0, 3, 4}, 4 }, 	// 	7, intersection between b->a and b->c, cut out quad
 						};
 
-				const uint state = ((!intersects_a_to_b ? 0b0001u : 0u) | (!intersects_b_to_c ? 0b0010u : 0u) | (!intersects_c_to_a ? 0b0011u : 0u)) + (should_cut_to_quad ? 0b0100u : 0u);
+				const unsigned int state = ((!intersects_a_to_b ? 0b0001u : 0u) | (!intersects_b_to_c ? 0b0010u : 0u) | (!intersects_c_to_a ? 0b0011u : 0u)) + (should_cut_to_quad ? 0b0100u : 0u);
 				const auto& indices = s_point_indices[state];
 
-				uint num_tris = indices.num_indices - 2;
+				unsigned int num_tris = indices.num_indices - 2;
 				assert(num_tris == 1 || num_tris == 2);
 				tri_in_out[0].screen_pos = points[indices.indices[((0<<1u)+0u)&0b11u]];
 				tri_in_out[1].screen_pos = points[indices.indices[((0<<1u)+1u)&0b11u]];
@@ -1151,8 +1151,8 @@ typedef struct
 			// clipping planes
 			// top clipping plane
 			{
-				const grh::vec3 n = {0, -1, 0};
-				const grh::vec3 o = {0, static_cast<float>(viewport_y_end), 0};
+				const dish::vec3 n = {0, -1, 0};
+				const dish::vec3 o = {0, static_cast<float>(viewport_y_end), 0};
 
 				for(std::uint_fast8_t i=clipped_tris_num; i--;)
 				{
@@ -1175,8 +1175,8 @@ typedef struct
 
 			// bot clipping plane
 			{
-				const grh::vec3 n = {0, 1, 0};
-				const grh::vec3 o = {0, static_cast<float>(viewport_y_start), 0};
+				const dish::vec3 n = {0, 1, 0};
+				const dish::vec3 o = {0, static_cast<float>(viewport_y_start), 0};
 
 				for(std::uint_fast8_t i=clipped_tris_num; i--;)
 				{
@@ -1199,8 +1199,8 @@ typedef struct
 
 			// left clipping plane
 			{
-				const grh::vec3 n = {1, 0, 0};
-				const grh::vec3 o = {static_cast<float>(viewport_x_start), 0, 0};
+				const dish::vec3 n = {1, 0, 0};
+				const dish::vec3 o = {static_cast<float>(viewport_x_start), 0, 0};
 
 				for(std::uint_fast8_t i=clipped_tris_num; i--;)
 				{
@@ -1223,8 +1223,8 @@ typedef struct
 
 			// right clipping plane
 			{
-				const grh::vec3 n = {-1, 0, 0};
-				const grh::vec3 o = {static_cast<float>(viewport_x_end), 0, 0};
+				const dish::vec3 n = {-1, 0, 0};
+				const dish::vec3 o = {static_cast<float>(viewport_x_end), 0, 0};
 
 				for(std::uint_fast8_t i=clipped_tris_num; i--;)
 				{
@@ -1258,7 +1258,7 @@ typedef struct
 			draw_triangle<draw_ctx_t, triangle_t>(source_triangle, triangle, draw_hline_function, frame_width, frame_height, 1u, 1u, (frame_width-1), (frame_height-1));
 		}
 
-		constexpr grh::mat4x4 create_perspective(float fovy, float aspect, float z_near, float z_far)
+		constexpr dish::mat4x4 create_perspective(float fovy, float aspect, float z_near, float z_far)
 		{
 			assert(std::abs(aspect - std::numeric_limits<float>::epsilon()) > 0.0f);
 
@@ -1271,7 +1271,7 @@ typedef struct
 			const float tanHalfFovy = std::is_constant_evaluated() ? gcem::tan(fovy_over_2) : std::tan(fovy_over_2);
 #endif
 
-			grh::mat4x4 result = {};
+			dish::mat4x4 result = {};
 			result[0][0] = 1.0f / (aspect * tanHalfFovy);
 			result[1][1] = 1.0f / (tanHalfFovy);
 			result[2][2] = (z_far + z_near) / (z_far - z_near);
@@ -1282,13 +1282,13 @@ typedef struct
 		}
 
 		template<vector3 vector3_t>
-		constexpr grh::mat4x4 create_lookat(const vector3_t& eye, const vector3_t& center, const vector3_t& up)
+		constexpr dish::mat4x4 create_lookat(const vector3_t& eye, const vector3_t& center, const vector3_t& up)
 		{
 			const vector3_t f(normalize(sub_xyz(center,eye)));
 			const vector3_t s(normalize(cross(up, f)));
 			const vector3_t u(cross(f, s));
 
-			grh::mat4x4 result = {};
+			dish::mat4x4 result = {};
 			result[0][0] = s.x;
 			result[1][0] = s.y;
 			result[2][0] = s.z;
@@ -1317,9 +1317,9 @@ typedef struct
 			const float near_plane 	= 0.1f;
 			const float far_plane 	= 100.0f;
 
-			const grh::mat4x4 perspective 	= create_perspective(camera.fov, aspect, near_plane / 10.0f, far_plane);
-			const grh::mat4x4 lookat 		= create_lookat(glm::vec3{camera.pos.x, camera.pos.y, camera.pos.z}, glm::vec3{camera.lookat.x, camera.lookat.y, camera.lookat.z}, glm::vec3{camera.up.x, camera.up.y, camera.up.z});
-			const grh::mat4x4 projview 		= mul(perspective, lookat);
+			const dish::mat4x4 perspective 	= create_perspective(camera.fov, aspect, near_plane / 10.0f, far_plane);
+			const dish::mat4x4 lookat 		= create_lookat(glm::vec3{camera.pos.x, camera.pos.y, camera.pos.z}, glm::vec3{camera.lookat.x, camera.lookat.y, camera.lookat.z}, glm::vec3{camera.up.x, camera.up.y, camera.up.z});
+			const dish::mat4x4 projview 		= mul(perspective, lookat);
 
 			const vector3 auto near_clipping_plane_normal 	= direction_to(camera.pos, camera.lookat);
 			const vector3 auto near_clipping_plane_pos 		= add_xyz(camera.pos, mul_xyz(near_clipping_plane_normal, near_plane));
@@ -1362,13 +1362,13 @@ typedef struct
 					get_tri_pt<2>(clipped_tri).z = clipped_tris_result[2].screen_pos.z;
 #endif
 
-					const grh::vec4 p0 = {get_tri_pt<0>(clipped_tri).x, get_tri_pt<0>(clipped_tri).y, get_tri_pt<0>(clipped_tri).z, 1};
-					const grh::vec4 p1 = {get_tri_pt<1>(clipped_tri).x, get_tri_pt<1>(clipped_tri).y, get_tri_pt<1>(clipped_tri).z, 1};
-					const grh::vec4 p2 = {get_tri_pt<2>(clipped_tri).x, get_tri_pt<2>(clipped_tri).y, get_tri_pt<2>(clipped_tri).z, 1};
+					const dish::vec4 p0 = {get_tri_pt<0>(clipped_tri).x, get_tri_pt<0>(clipped_tri).y, get_tri_pt<0>(clipped_tri).z, 1};
+					const dish::vec4 p1 = {get_tri_pt<1>(clipped_tri).x, get_tri_pt<1>(clipped_tri).y, get_tri_pt<1>(clipped_tri).z, 1};
+					const dish::vec4 p2 = {get_tri_pt<2>(clipped_tri).x, get_tri_pt<2>(clipped_tri).y, get_tri_pt<2>(clipped_tri).z, 1};
 
-					const grh::vec4 p0_projview = mul(projview, p0);
-					const grh::vec4 p1_projview = mul(projview, p1);
-					const grh::vec4 p2_projview = mul(projview, p2);
+					const dish::vec4 p0_projview = mul(projview, p0);
+					const dish::vec4 p1_projview = mul(projview, p1);
+					const dish::vec4 p2_projview = mul(projview, p2);
 
 					assert(p0_projview.w != 0.0f);
 
