@@ -272,6 +272,73 @@ namespace dis
 		{
 			dish::vec3 screen_pos;
 			user_defined_iterators_t user_defined; // xyz or uv ect... ( they need to be clipped as well )
+
+			screen_space_clipped_pt& operator -= (const screen_space_clipped_pt& other)
+			{
+				screen_pos.x -= other.screen_pos.x;
+				screen_pos.y -= other.screen_pos.y;
+				screen_pos.z -= other.screen_pos.z;
+				auto temp = user_defined;
+				user_defined = other.user_defined;
+				user_defined *= -1.0f;
+				user_defined += temp;
+				return *this;
+			}
+
+			screen_space_clipped_pt& operator += (const screen_space_clipped_pt& other)
+			{
+				screen_pos.x += other.screen_pos.x;
+				screen_pos.y += other.screen_pos.y;
+				screen_pos.z += other.screen_pos.z;
+				user_defined += other.user_defined;
+				return *this;
+			}
+
+			screen_space_clipped_pt& operator *= (const screen_space_clipped_pt& other)
+			{
+				screen_pos.x *= other.screen_pos.x;
+				screen_pos.y *= other.screen_pos.y;
+				screen_pos.z *= other.screen_pos.z;
+				user_defined *= other.user_defined;
+				return *this;
+			}
+
+			screen_space_clipped_pt& operator *= (float v)
+			{
+				screen_pos.x *= v;
+				screen_pos.y *= v;
+				screen_pos.z *= v;
+				user_defined *= v;
+				return *this;
+			}
+
+			screen_space_clipped_pt operator - (const screen_space_clipped_pt& other) const
+			{
+				screen_space_clipped_pt v = *this;
+				v -= other;
+				return v;
+			}
+
+			screen_space_clipped_pt operator + (const screen_space_clipped_pt& other) const
+			{
+				screen_space_clipped_pt v = *this;
+				v += other;
+				return v;
+			}
+
+			screen_space_clipped_pt operator * (const screen_space_clipped_pt& other) const
+			{
+				screen_space_clipped_pt v = *this;
+				v *= other;
+				return v;
+			}
+
+			screen_space_clipped_pt operator * (float value) const
+			{
+				screen_space_clipped_pt v = *this;
+				v *= value;
+				return v;
+			}
 		};
 
 		template<typename user_defined_iterators_t>
@@ -658,13 +725,21 @@ namespace dis
 		{
 			using point_t = screen_space_clipped_pt<user_defined_iterators_t>;
 
+			const point_t& a_pt = tri_in_out[0];
+			const point_t& b_pt = tri_in_out[1];
+			const point_t& c_pt = tri_in_out[2];
+
 			const vector3 auto& a = tri_in_out[0].screen_pos;
 			const vector3 auto& b = tri_in_out[1].screen_pos;
 			const vector3 auto& c = tri_in_out[2].screen_pos;
 
-			const vector3 auto ab = sub_xyz(b, a);
-			const vector3 auto bc = sub_xyz(c, b);
-			const vector3 auto ca = sub_xyz(a, c);
+			const point_t ab_pt = b_pt - a_pt;
+			const point_t bc_pt = c_pt - b_pt;
+			const point_t ca_pt = a_pt - c_pt;
+
+			const vector3 auto& ab = ab_pt.screen_pos;
+			const vector3 auto& bc = bc_pt.screen_pos;
+			const vector3 auto& ca = ca_pt.screen_pos;
 
 			const floating_point auto ab_len = length(ab);
 			const floating_point auto bc_len = length(bc);
@@ -686,9 +761,13 @@ namespace dis
 			const bool intersects_b_to_c = (b_to_c_t > 0 && b_to_c_t < bc_len);
 			const bool intersects_c_to_a = (c_to_a_t > 0 && c_to_a_t < ca_len);
 
-			const vector3 auto intersection_a_to_b = add_xyz(a, mul_xyz(ab_dir, a_to_b_t));
-			const vector3 auto intersection_b_to_c = add_xyz(b, mul_xyz(bc_dir, b_to_c_t));
-			const vector3 auto intersection_c_to_a = add_xyz(c, mul_xyz(ca_dir, c_to_a_t));
+			const float ab_perc = a_to_b_t * ab_len_inv;
+			const float bc_perc = b_to_c_t * bc_len_inv;
+			const float ca_perc = c_to_a_t * ca_len_inv;
+
+			point_t intersection_a_to_b_pt = a_pt + (ab_pt * ab_perc);
+			point_t intersection_b_to_c_pt = b_pt + (bc_pt * bc_perc);
+			point_t intersection_c_to_a_pt = c_pt + (ca_pt * ca_perc);
 
 			const vector3 auto& triangle_tip  = (intersects_a_to_b && intersects_c_to_a) ? a : ((intersects_a_to_b && intersects_b_to_c) ? b : c);
 			const vector3 auto& any_other_tip = (intersects_a_to_b && intersects_c_to_a) ? b : ((intersects_a_to_b && intersects_b_to_c) ? c : a);
@@ -705,15 +784,8 @@ namespace dis
 					float perc;
 				};
 
-				const float ab_perc = a_to_b_t * ab_len_inv;
-				const float bc_perc = b_to_c_t * bc_len_inv;
-				const float ca_perc = c_to_a_t * ab_len_inv;
-
-				const std::decay_t<decltype(a)> points[]  = {a, b, c, intersection_a_to_b, intersection_b_to_c, intersection_c_to_a};
-				const from_to 					from_tos[] = {{0,0,0}, {1,1,0}, {2,2,0}, {0,1,ab_perc}, {1,2,bc_perc}, {2,0,ca_perc}};
-
-				// tri_in_out[INDEX] 'targets' a=0 b=1,c=2, intersection_a_to_B=1, intersection_b_to_C=2, intersection_c_to_A=0
-				const std::uint_fast8_t targets[] = {0, 1, 2, 1, 2, 0};
+				const point_t points[]  	= {a_pt, b_pt, c_pt, intersection_a_to_b_pt, intersection_b_to_c_pt, intersection_c_to_a_pt};
+				const from_to from_tos[] 	= {{0,0,0}, {1,1,0}, {2,2,0}, {0,1,ab_perc}, {1,2,bc_perc}, {2,0,ca_perc}};
 
 				struct // NOLINT
 				{
@@ -721,11 +793,11 @@ namespace dis
 					std::uint_fast8_t num_indices = 2;
 				} constexpr s_point_indices[] =
 						{
-								{ }, 					// 	0, triangle has not intersection after all ?
+								{ }, 					// 	0, triangle has no intersection after all ?
 								{ { 2, 5, 4}, 3 }, 		// 	1, intersection between c->a and c->b, cut out triangle
 								{ { 0, 3, 5}, 3 }, 		// 	2, intersection between a->b and a->c, cut out triangle
 								{ { 1, 3, 4}, 3 }, 		// 	3, intersection between b->a and b->c, cut out triangle
-								{ }, 					// 	4, triangle has not intersection after all ?
+								{ }, 					// 	4, triangle has no intersection after all ?
 								{ { 0, 1, 4, 5}, 4 }, 	// 	5, intersection between c->a and c->b, cut out quad
 								{ { 1, 2, 5, 3}, 4 }, 	// 	6, intersection between a->b and a->c, cut out quad
 								{ { 2, 0, 3, 4}, 4 }, 	// 	7, intersection between b->a and b->c, cut out quad
@@ -740,32 +812,9 @@ namespace dis
 				std::uint_fast8_t t0_p1_index = indices.indices[((0<<1u)+1u)&0b11u];
 				std::uint_fast8_t t0_p2_index = indices.indices[((0<<1u)+2u)&0b11u];
 
-				tri_in_out[0].screen_pos = points[t0_p0_index];
-				tri_in_out[1].screen_pos = points[t0_p1_index];
-				tri_in_out[2].screen_pos = points[t0_p2_index];
-
-				if(t0_p0_index >= 3) // this point is new ( made by the cut )
-				{
-					clip_user_defined_iterators(tri_in_out[from_tos[t0_p0_index].from].user_defined, tri_in_out[from_tos[t0_p0_index].to].user_defined, from_tos[t0_p0_index].perc);
-				}
-				if(t0_p1_index >= 3) // this point is new ( made by the cut )
-				{
-					clip_user_defined_iterators(tri_in_out[from_tos[t0_p1_index].from].user_defined, tri_in_out[from_tos[t0_p1_index].to].user_defined, from_tos[t0_p1_index].perc);
-				}
-				if(t0_p2_index >= 3) // this point is new ( made by the cut )
-				{
-					clip_user_defined_iterators(tri_in_out[from_tos[t0_p2_index].from].user_defined, tri_in_out[from_tos[t0_p2_index].to].user_defined, from_tos[t0_p2_index].perc);
-				}
-				/*
-				if(p1_index < 3 && p0_index >= 3) // this point is new ( made by the cut )
-				{
-					vertex_t& target = targets[p0_index];
-
-
-					tri_in_out[p0_index].vertex = tri_in_out[p0_index].vertex;
-					auto diff =
-				}
-				 */
+				tri_in_out[0] = points[t0_p0_index];
+				tri_in_out[1] = points[t0_p1_index];
+				tri_in_out[2] = points[t0_p2_index];
 
 				if(num_tris == 2)
 				{
@@ -773,9 +822,9 @@ namespace dis
 					std::uint_fast8_t t1_p1_index = indices.indices[((1<<1u)+1u)&0b11u];
 					std::uint_fast8_t t1_p2_index = indices.indices[((1<<1u)+2u)&0b11u];
 
-					tri_extra_out[0].screen_pos = points[t1_p0_index];
-					tri_extra_out[1].screen_pos = points[t1_p1_index];
-					tri_extra_out[2].screen_pos = points[t1_p2_index];
+					tri_extra_out[0] = points[t1_p0_index];
+					tri_extra_out[1] = points[t1_p1_index];
+					tri_extra_out[2] = points[t1_p2_index];
 					return 1;
 				}
 			}
