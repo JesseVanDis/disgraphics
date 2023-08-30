@@ -337,44 +337,17 @@ namespace dis
 			{
 				const set_precalculated c = set_base(p0, p1);
 
-				float Z1 = p0.screen_pos.z;
-				float Z2 = p1.screen_pos.z;
+				const float one_over_z_end = 1.0f / p1.screen_pos.z;
+				one_over_z = 1.0f / p0.screen_pos.z;
 
-				float aOneOverZStart = {};
-				//float aOneOverZEnd = {};
-				UV aUVOverZStart = {};
-				UV aUVOverZEnd = {};
-				//dish::vec2 aStartPoint = {};
-				//dish::vec2 aEndPoint = {};
+				const UV uv_over_z_start = {p0.vertex.u * one_over_z, p0.vertex.v * one_over_z};
+				const UV uv_over_z_end = {p1.vertex.u * one_over_z_end, p1.vertex.v * one_over_z_end};
 
-				{
-					float OneOverZStart = 1.0f / Z1;
-					float OneOverZEnd = 1.0f / Z2;
-					UV UVOverZStart = {p0.vertex.u * OneOverZStart, p0.vertex.v * OneOverZStart};
-					UV UVOverZEnd = {p1.vertex.u * OneOverZEnd, p1.vertex.v * OneOverZEnd};
+				uv_over_z_it.u = (uv_over_z_end.u - uv_over_z_start.u) * c.one_over_height_ceiled;
+				uv_over_z_it.v = (uv_over_z_end.v - uv_over_z_start.v) * c.one_over_height_ceiled;
 
-					aOneOverZStart = OneOverZStart;
-					//aOneOverZEnd = OneOverZEnd;
-					aUVOverZStart = UVOverZStart;
-					aUVOverZEnd = UVOverZEnd;
-					//aStartPoint = Line.StartPoint;
-					//aEndPoint = Line.EndPoint;
-				}
-
-				//float OneOverZStart = aOneOverZStart;
-				//float OneOverZ = aOneOverZStart;
-				one_over_z = aOneOverZStart;
-				//float OneOverZEnd = aOneOverZEnd;
-				//UV UVOverZStart = aUVOverZStart;
-				UV UVOverZ = aUVOverZStart;
-				UV UVOverZEnd = aUVOverZEnd;
-				float OverHeight = c.one_over_height_ceiled;
-
-				uv_over_z_it.u = (UVOverZEnd.u - UVOverZ.u) * OverHeight;
-				uv_over_z_it.v = (UVOverZEnd.v - UVOverZ.v) * OverHeight;
-
-				uv_over_z.u = aUVOverZStart.u + uv_over_z_it.u * c.sub_pixel;
-				uv_over_z.v = aUVOverZStart.v + uv_over_z_it.v * c.sub_pixel;
+				uv_over_z.u = uv_over_z_start.u + uv_over_z_it.u * c.sub_pixel;
+				uv_over_z.v = uv_over_z_start.v + uv_over_z_it.v * c.sub_pixel;
 			}
 		};
 
