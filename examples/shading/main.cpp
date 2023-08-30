@@ -66,6 +66,12 @@ namespace example
 				dish::for_each_field(*this, other, [](auto& a, const auto& b){ a += b;});
 				return *this;
 			}
+
+			vertex_it& operator *= (dis::floating_point auto other)
+			{
+				dish::for_each_field(*this, other, [](auto& a, const auto& b){ a *= b;});
+				return *this;
+			}
 		};
 
 		vertex_it begin;

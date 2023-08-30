@@ -148,9 +148,17 @@ namespace dis::helpers
 		inline void for_each_field(auto& a, auto& b, cb_t cb)
 		{
 			using a_t = std::decay_t<decltype(a)>;
+			using b_t = std::decay_t<decltype(b)>;
 			if constexpr(requires{a_t::template get_field<index>(a);})
 			{
-				cb(a_t::template get_field<index>(a), a_t::template get_field<index>(b));
+				if constexpr(std::is_same_v<a_t, b_t>)
+				{
+					cb(a_t::template get_field<index>(a), a_t::template get_field<index>(b));
+				}
+				else
+				{
+					cb(a_t::template get_field<index>(a), b);
+				}
 				for_each_field<index+1, cb_t>(a, b, cb);
 			}
 		}
@@ -160,8 +168,6 @@ namespace dis::helpers
 	inline void for_each_field(auto& a, auto& b, cb_t cb)
 	{
 		using a_t = std::decay_t<decltype(a)>;
-		using b_t = std::decay_t<decltype(b)>;
-		static_assert(std::is_same_v<a_t, b_t>, "a and b must be of the same type");
 		static_assert(requires{a_t::template get_field<0>(std::declval<a_t&>());}, "Given type must feature a static 'get_field<int>(auto& self) function'");
 		detail::for_each_field<0>(a, b, cb);
 	}
@@ -305,10 +311,10 @@ namespace dis
 			}
 		};
 
-		struct UV
-		{
-			float u,v;
-		};
+		//struct UV
+		//{
+		//	float u,v;
+		//};
 
 		template<typename user_defined_iterators_t, typename enable = void>
 		struct line_it;
@@ -321,15 +327,15 @@ namespace dis
 
 			float one_over_z;
 
-			UV uv_over_z;
-			UV uv_over_z_it;
+			//UV uv_over_z;
+			//UV uv_over_z_it;
 
 			void increment()
 			{
 				increment_base();
 				user_defined += user_defined_it;
-				uv_over_z.u += uv_over_z_it.u;
-				uv_over_z.v += uv_over_z_it.v;
+				//uv_over_z.u += uv_over_z_it.u;
+				//uv_over_z.v += uv_over_z_it.v;
 			}
 
 			template<vector3 vertex_t>
@@ -337,17 +343,38 @@ namespace dis
 			{
 				const set_precalculated c = set_base(p0, p1);
 
-				const float one_over_z_end = 1.0f / p1.screen_pos.z;
-				one_over_z = 1.0f / p0.screen_pos.z;
+				using float_t = decltype(c.one_over_height_ceiled);
 
-				const UV uv_over_z_start = {p0.vertex.u * one_over_z, p0.vertex.v * one_over_z};
-				const UV uv_over_z_end = {p1.vertex.u * one_over_z_end, p1.vertex.v * one_over_z_end};
+				const float one_over_z_end 	= 1.0f / p1.screen_pos.z;
+				one_over_z 					= 1.0f / p0.screen_pos.z;
 
-				uv_over_z_it.u = (uv_over_z_end.u - uv_over_z_start.u) * c.one_over_height_ceiled;
-				uv_over_z_it.v = (uv_over_z_end.v - uv_over_z_start.v) * c.one_over_height_ceiled;
+				// below is equal to:
+				//   start = p0 * one_over_z
+				//   end   = p1 * one_over_z_end
+				//   v_it  = (end - start) * c.one_over_height_ceiled
+				//   v     = start + v_it * c.sub_pixel
 
-				uv_over_z.u = uv_over_z_start.u + uv_over_z_it.u * c.sub_pixel;
-				uv_over_z.v = uv_over_z_start.v + uv_over_z_it.v * c.sub_pixel;
+				user_defined_iterators_t inv_start;
+				inv_start = p0.vertex;
+				inv_start *= -one_over_z;
+
+				user_defined_it = p1.vertex;
+				user_defined_it *= one_over_z_end;
+				user_defined_it += inv_start;
+				user_defined_it *= c.one_over_height_ceiled;
+
+				inv_start *= (float_t)-1;
+				user_defined = user_defined_it;
+				user_defined *= c.sub_pixel;
+				user_defined += inv_start;
+
+				//const UV uv_over_z_start = {p0.vertex.u * one_over_z, p0.vertex.v * one_over_z};
+				//const UV uv_over_z_end = {p1.vertex.u * one_over_z_end, p1.vertex.v * one_over_z_end};
+
+				//uv_over_z_it.u = (uv_over_z_end.u - uv_over_z_start.u) * c.one_over_height_ceiled;
+				//uv_over_z_it.v = (uv_over_z_end.v - uv_over_z_start.v) * c.one_over_height_ceiled;
+				//uv_over_z.u = uv_over_z_start.u + uv_over_z_it.u * c.sub_pixel;
+				//uv_over_z.v = uv_over_z_start.v + uv_over_z_it.v * c.sub_pixel;
 			}
 		};
 
@@ -403,24 +430,25 @@ namespace dis
 				const float one_over_z_it = (right.one_over_z - left.one_over_z) * one_over_width;
 				const float one_over_z 	= left.one_over_z + (one_over_z_it * sub_texel);
 
-				const UV uv_over_z_it 	= {(right.uv_over_z.u - left.uv_over_z.u) * one_over_width, (right.uv_over_z.v - left.uv_over_z.v) * one_over_width};
-				const UV uv_over_z 		= {left.uv_over_z.u + (uv_over_z_it.u * sub_texel), left.uv_over_z.v + (uv_over_z_it.v * sub_texel)};
-
 				const float z = (1.0f/one_over_z);
 
-				const float u = uv_over_z.u * z;
-				const float v = uv_over_z.v * z;
+				//ctx.it 	= (right.user_defined - left.user_defined) * one_over_width;
+				ctx.it = left.user_defined;
+				ctx.it *= -1.0f;
+				ctx.it += right.user_defined;
+				ctx.it *= one_over_width;
+
+				//ctx.begin = (left.user_defined + (ctx.it * sub_texel)) * z;
+				ctx.begin = ctx.it;
+				ctx.begin *= sub_texel;
+				ctx.begin += left.user_defined;
+				ctx.begin *= z;
 
 				if constexpr(requires{ctx.one_over_z;})
 				{
 					ctx.one_over_z 		= one_over_z;
 					ctx.one_over_z_it 	= one_over_z_it;
 				}
-
-				ctx.begin.u = u;
-				ctx.begin.v = v;
-				ctx.it.u = uv_over_z_it.u;
-				ctx.it.v = uv_over_z_it.v;
 			}
 
 			draw_hline_function(source_triangle, ctx);
