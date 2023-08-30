@@ -473,16 +473,28 @@ namespace dis
 		template<draw_horizontal_line_ctx draw_ctx_t>
 		inline constexpr void check_context_validity(draw_ctx_t& ctx)
 		{
-#if 1
+#if 0
 			int to = ctx.px_x_from + ctx.line_length_px;
 			assert(to 				>= ctx.px_x_from);
 			assert(ctx.px_y 		< ctx.buffer_height);
 			assert(ctx.px_x_from 	< ctx.buffer_width);
 			assert(to				< ctx.buffer_width);
 #else
-			ctx.px_y 			= std::min(ctx.px_y, (ctx.buffer_height-1));
-			ctx.px_x_from 		= std::min(ctx.px_x_from, (ctx.buffer_width-1));
-			ctx.line_length_px 	= (ctx.px_x_from + ctx.line_length_px) > (ctx.buffer_width-1) ? ((ctx.buffer_width-1) - ctx.px_x_from) : ctx.line_length_px;
+			ctx.px_y 			= std::clamp(ctx.px_y, 		0u, (uint32_t)(ctx.buffer_height-1));
+			ctx.px_x_from 		= std::clamp(ctx.px_x_from, 0u, (uint32_t)(ctx.buffer_width-1));
+			int to = std::clamp(ctx.px_x_from + ctx.line_length_px, 0u, (uint32_t)(ctx.buffer_width-1));
+			if(to <= ctx.px_x_from)
+			{
+				ctx.line_length_px = 0;
+			}
+			else
+			{
+				ctx.line_length_px = to - ctx.px_x_from;
+			}
+
+			//ctx.px_y 			= std::min(ctx.px_y, (ctx.buffer_height-1));
+			//ctx.px_x_from 		= std::min(ctx.px_x_from, (ctx.buffer_width-1));
+			//ctx.line_length_px 	= (ctx.px_x_from + ctx.line_length_px) > (ctx.buffer_width-1) ? ((ctx.buffer_width-1) - ctx.px_x_from) : ctx.line_length_px;
 #endif
 		}
 
@@ -729,33 +741,25 @@ namespace dis
 			const point_t& b_pt = tri_in_out[1];
 			const point_t& c_pt = tri_in_out[2];
 
-			const vector3 auto& a = tri_in_out[0].screen_pos;
-			const vector3 auto& b = tri_in_out[1].screen_pos;
-			const vector3 auto& c = tri_in_out[2].screen_pos;
-
 			const point_t ab_pt = b_pt - a_pt;
 			const point_t bc_pt = c_pt - b_pt;
 			const point_t ca_pt = a_pt - c_pt;
 
-			const vector3 auto& ab = ab_pt.screen_pos;
-			const vector3 auto& bc = bc_pt.screen_pos;
-			const vector3 auto& ca = ca_pt.screen_pos;
-
-			const floating_point auto ab_len = length(ab);
-			const floating_point auto bc_len = length(bc);
-			const floating_point auto ca_len = length(ca);
+			const floating_point auto ab_len = length(ab_pt.screen_pos);
+			const floating_point auto bc_len = length(bc_pt.screen_pos);
+			const floating_point auto ca_len = length(ca_pt.screen_pos);
 
 			const floating_point auto ab_len_inv = 1.0f / ab_len;
 			const floating_point auto bc_len_inv = 1.0f / bc_len;
 			const floating_point auto ca_len_inv = 1.0f / ca_len;
 
-			const vector3 auto ab_dir = mul_xyz(ab, ab_len_inv); // TODO: This can be precalculated
-			const vector3 auto bc_dir = mul_xyz(bc, bc_len_inv); // TODO: This can be precalculated
-			const vector3 auto ca_dir = mul_xyz(ca, ca_len_inv); // TODO: This can be precalculated
+			const vector3 auto ab_dir = mul_xyz(ab_pt.screen_pos, ab_len_inv); // TODO: This can be precalculated
+			const vector3 auto bc_dir = mul_xyz(bc_pt.screen_pos, bc_len_inv); // TODO: This can be precalculated
+			const vector3 auto ca_dir = mul_xyz(ca_pt.screen_pos, ca_len_inv); // TODO: This can be precalculated
 
-			const floating_point auto a_to_b_t = intersect(a, ab_dir, plane_pos, plane_normal);
-			const floating_point auto b_to_c_t = intersect(b, bc_dir, plane_pos, plane_normal);
-			const floating_point auto c_to_a_t = intersect(c, ca_dir, plane_pos, plane_normal);
+			const floating_point auto a_to_b_t = intersect(a_pt.screen_pos, ab_dir, plane_pos, plane_normal);
+			const floating_point auto b_to_c_t = intersect(b_pt.screen_pos, bc_dir, plane_pos, plane_normal);
+			const floating_point auto c_to_a_t = intersect(c_pt.screen_pos, ca_dir, plane_pos, plane_normal);
 
 			const bool intersects_a_to_b = (a_to_b_t > 0 && a_to_b_t < ab_len);
 			const bool intersects_b_to_c = (b_to_c_t > 0 && b_to_c_t < bc_len);
@@ -769,8 +773,8 @@ namespace dis
 			point_t intersection_b_to_c_pt = b_pt + (bc_pt * bc_perc);
 			point_t intersection_c_to_a_pt = c_pt + (ca_pt * ca_perc);
 
-			const vector3 auto& triangle_tip  = (intersects_a_to_b && intersects_c_to_a) ? a : ((intersects_a_to_b && intersects_b_to_c) ? b : c);
-			const vector3 auto& any_other_tip = (intersects_a_to_b && intersects_c_to_a) ? b : ((intersects_a_to_b && intersects_b_to_c) ? c : a);
+			const vector3 auto& triangle_tip  = (intersects_a_to_b && intersects_c_to_a) ? a_pt.screen_pos : ((intersects_a_to_b && intersects_b_to_c) ? b_pt.screen_pos : c_pt.screen_pos);
+			const vector3 auto& any_other_tip = (intersects_a_to_b && intersects_c_to_a) ? b_pt.screen_pos : ((intersects_a_to_b && intersects_b_to_c) ? c_pt.screen_pos : a_pt.screen_pos);
 
 			if(intersects_a_to_b || intersects_b_to_c || intersects_c_to_a)
 			{
@@ -785,7 +789,6 @@ namespace dis
 				};
 
 				const point_t points[]  	= {a_pt, b_pt, c_pt, intersection_a_to_b_pt, intersection_b_to_c_pt, intersection_c_to_a_pt};
-				const from_to from_tos[] 	= {{0,0,0}, {1,1,0}, {2,2,0}, {0,1,ab_perc}, {1,2,bc_perc}, {2,0,ca_perc}};
 
 				struct // NOLINT
 				{
@@ -830,7 +833,7 @@ namespace dis
 			}
 			else
 			{
-				return dot_xyz(sub_xyz(c, plane_pos), plane_normal) > 0 ? 0 : -1;
+				return dot_xyz(sub_xyz(c_pt.screen_pos, plane_pos), plane_normal) > 0 ? 0 : -1;
 			}
 			return 0;
 		}
@@ -1080,56 +1083,6 @@ namespace dis
 					{
 						draw_triangle<draw_ctx_t, triangle_t, user_defined_iterators_t>(tri, clipped_tri, draw_hline_function, frame_width, frame_height);
 					}
-
-#if 0
-					// officially the below should be done, but clip is not ready for this yet ( it only clips on 'screen_pos' level )
-#if 0
-					get_tri_pt<0>(clipped_tri) = clipped_tris_result[0].vertex;
-					get_tri_pt<1>(clipped_tri) = clipped_tris_result[1].vertex;
-					get_tri_pt<2>(clipped_tri) = clipped_tris_result[2].vertex;
-#else
-					triangle_t clipped_tri = tri;
-					get_tri_pt<0>(clipped_tri).x = clipped_tris_result[0].screen_pos.x;
-					get_tri_pt<0>(clipped_tri).y = clipped_tris_result[0].screen_pos.y;
-					get_tri_pt<0>(clipped_tri).z = clipped_tris_result[0].screen_pos.z;
-					get_tri_pt<1>(clipped_tri).x = clipped_tris_result[1].screen_pos.x;
-					get_tri_pt<1>(clipped_tri).y = clipped_tris_result[1].screen_pos.y;
-					get_tri_pt<1>(clipped_tri).z = clipped_tris_result[1].screen_pos.z;
-					get_tri_pt<2>(clipped_tri).x = clipped_tris_result[2].screen_pos.x;
-					get_tri_pt<2>(clipped_tri).y = clipped_tris_result[2].screen_pos.y;
-					get_tri_pt<2>(clipped_tri).z = clipped_tris_result[2].screen_pos.z;
-#endif
-
-					const dish::vec4 p0 = {get_tri_pt<0>(clipped_tri).x, get_tri_pt<0>(clipped_tri).y, get_tri_pt<0>(clipped_tri).z, 1};
-					const dish::vec4 p1 = {get_tri_pt<1>(clipped_tri).x, get_tri_pt<1>(clipped_tri).y, get_tri_pt<1>(clipped_tri).z, 1};
-					const dish::vec4 p2 = {get_tri_pt<2>(clipped_tri).x, get_tri_pt<2>(clipped_tri).y, get_tri_pt<2>(clipped_tri).z, 1};
-
-					const dish::vec4 p0_projview = mul(projview, p0);
-					const dish::vec4 p1_projview = mul(projview, p1);
-					const dish::vec4 p2_projview = mul(projview, p2);
-
-					assert(p0_projview.w != 0.0f);
-
-					clipped_tris_result[0].screen_pos.x = ((p0_projview.x / p0_projview.w) * 0.5f + 0.5f) * target_width_flt;
-					clipped_tris_result[0].screen_pos.y = ((p0_projview.y / p0_projview.w) * 0.5f + 0.5f) * target_height_flt;
-					clipped_tris_result[0].screen_pos.z = (p0_projview.z / p0_projview.w);
-
-					clipped_tris_result[1].screen_pos.x = ((p1_projview.x / p1_projview.w) * 0.5f + 0.5f) * target_width_flt;
-					clipped_tris_result[1].screen_pos.y = ((p1_projview.y / p1_projview.w) * 0.5f + 0.5f) * target_height_flt;
-					clipped_tris_result[1].screen_pos.z = (p1_projview.z / p1_projview.w);
-
-					clipped_tris_result[2].screen_pos.x = ((p2_projview.x / p2_projview.w) * 0.5f + 0.5f) * target_width_flt;
-					clipped_tris_result[2].screen_pos.y = ((p2_projview.y / p2_projview.w) * 0.5f + 0.5f) * target_height_flt;
-					clipped_tris_result[2].screen_pos.z = (p2_projview.z / p2_projview.w);
-
-					const float cross_z = (clipped_tris_result[1].screen_pos.x - clipped_tris_result[0].screen_pos.x) * (clipped_tris_result[2].screen_pos.y - clipped_tris_result[0].screen_pos.y) - (clipped_tris_result[2].screen_pos.x - clipped_tris_result[0].screen_pos.x) * (clipped_tris_result[1].screen_pos.y - clipped_tris_result[0].screen_pos.y);
-					const bool backface_culling = cross_z > 0.0f;
-
-					if(backface_culling)
-					{
-						draw_triangle<draw_ctx_t, triangle_t>(tri, clipped_tris_result, draw_hline_function, frame_width, frame_height);
-					}
-#endif
 				}
 			}
 		}
