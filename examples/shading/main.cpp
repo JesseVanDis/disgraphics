@@ -46,18 +46,25 @@ namespace example
 		struct vertex_it
 		{
 			float u, v;
-			vertex_it& operator = (const vertex& vertex)
+
+			template<unsigned int index>
+			static auto& get_field(auto& self)
 			{
-				u = vertex.u;
-				v = vertex.v;
+				if constexpr(index == 0) { return self.u; }
+				if constexpr(index == 1) { return self.v; }
+			}
+
+			vertex_it& operator = (const vertex& other)
+			{
+				u = other.u;
+				v = other.v;
 				return *this;
 			}
 
-			template<unsigned int index>
-			float& get() requires (index < 2)
+			vertex_it& operator += (const vertex_it& other)
 			{
-				if constexpr(index == 0) { return u; }
-				if constexpr(index == 1) { return v; }
+				dish::for_each_field(*this, other, [](auto& a, const auto& b){ a += b;});
+				return *this;
 			}
 		};
 
@@ -96,29 +103,34 @@ namespace example
 
 			inline void operator()(const tri& source_triangle, const draw_ctx& ctx)
 			{
-				/*
 				uint32_t* px = &pixels[ctx.px_x_from + ctx.px_y * buffer_width];
 				float one_over_z = ctx.one_over_z;
-				float u = ctx.it.u; dffdfd
+				auto it = ctx.begin;
 
+				//uint8_t uu = (uint8_t)std::clamp(it.u * 255.0f, 0.0f, 255.0f);
 
 				float ZZ = (1.0f/one_over_z);
-				printf("%f\n", ZZ);
+				printf("%f\n", it.u);
 
 				for(size_t i=0; i<ctx.line_length_px; i++)
 				{
 					float Z = (1.0f/one_over_z);
 
-					uint8_t color = std::clamp(Z, 0.0f, 255.0f);
+					uint8_t u = (uint8_t)std::clamp(it.u * 255.0f, 0.0f, 255.0f);
+					uint8_t v = (uint8_t)std::clamp(it.v * 255.0f, 0.0f, 255.0f);
 
-					px[i] = (color << 24) + (color << 16) + (color << 8) + (color << 0);
+					//uint8_t color = u;//std::clamp(Z, 0.0f, 255.0f);
+
+					px[i] = (u << 24) + (u << 16) + (v << 8) + (v << 0);
 
 					one_over_z += ctx.one_over_z_it;
+					//dis::detail::add(it, ctx.it);
+					it += ctx.it;
 				}
-				 */
-				auto begin = std::next(pixels.begin(), ctx.px_x_from + ctx.px_y * buffer_width);
-				auto end = std::next(begin, ctx.line_length_px);
-				std::fill(begin, end, 0xffffffff);
+
+				//auto begin = std::next(pixels.begin(), ctx.px_x_from + ctx.px_y * buffer_width);
+				//auto end = std::next(begin, ctx.line_length_px);
+				//std::fill(begin, end, 0xffffffff);
 			}
 		} draw;
 		draw.buffer_width 	= (screen_width / scale);

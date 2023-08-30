@@ -141,6 +141,29 @@ namespace dis::helpers
 	static_assert(camera<cam>);
 
 	using mat4x4 = std::array<std::array<float, 4>, 4>;
+
+	namespace detail
+	{
+		template<unsigned int index, typename cb_t>
+		inline void for_each_field(auto& a, auto& b, cb_t cb)
+		{
+			if constexpr(requires{decltype(a)::get_field<index>(a);})
+			{
+				cb(decltype(a)::get_field<index>(a), decltype(a)::get_field<index>(b));
+				for_each_fields_ext<index+1, cb_t>(a, b, cb);
+			}
+		}
+	}
+
+	template<typename cb_t>
+	inline void for_each_field(auto& a, auto& b, cb_t cb)
+	{
+		using a_t = std::decay_t<decltype(a)>;
+		using b_t = std::decay_t<decltype(b)>;
+		static_assert(std::is_same_v<a_t, b_t>, "a and b must be of the same type");
+		static_assert(requires{a_t::template get_field<0>(std::declval<a_t&>());}, "Given type must feature a static 'get_field<int>(auto& self) function'");
+		detail::for_each_field<0>(a, b, cb);
+	}
 }
 namespace dish = dis::helpers;
 
@@ -364,7 +387,7 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 		template<typename T>
 		concept line_custom_iterable = requires(T v)
 		{
-			{v.template get<0>()} 		-> std::same_as<float&>;
+			{v += v}  -> std::same_as<T&>;
 		};
 
 		template<typename vertex_t, typename T>
@@ -430,16 +453,6 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			}
 		};
 
-		template<unsigned int index>
-		inline void add(line_custom_iterable auto& a, line_custom_iterable auto& b)
-		{
-			if constexpr(requires{a.template get<index>();})
-			{
-				(a.template get<index>()) += (b.template get<index>());
-				add<index+1>(a, b);
-			}
-		}
-
 		struct UV
 		{
 			float u,v;
@@ -456,9 +469,10 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 
 			float one_over_z;
 
-			UV p0_uv;
-			UV p1_uv;
-			UV p0_uv_over_z;
+			//UV p0_uv;
+			//UV p1_uv;
+			UV uv_over_z;
+			UV uv_over_z_it;
 
 			/*
 			const SVert& StartPoint = TriInfo.TriMesh.v[Line.StartVertIndex];
@@ -482,7 +496,9 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			void increment()
 			{
 				increment_base();
-				add<0>(user_defined, user_defined_it);
+				user_defined += user_defined_it;
+				uv_over_z.u += uv_over_z_it.u;
+				uv_over_z.v += uv_over_z_it.v;
 			}
 
 			template<vector3 vertex_t>
@@ -490,21 +506,108 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 			{
 				const set_precalculated c = set_base(p0, p1);
 
-				one_over_z = 1.0f / p0.screen_pos.z;
+				float Z1 = p0.screen_pos.z;
+				float Z2 = p1.screen_pos.z;
 
-				p0_uv.u = p0.vertex.u;
-				p0_uv.v = p0.vertex.v;
+				float aOneOverZStart = {};
+				//float aOneOverZEnd = {};
+				UV aUVOverZStart = {};
+				UV aUVOverZEnd = {};
+				//dish::vec2 aStartPoint = {};
+				//dish::vec2 aEndPoint = {};
 
-				p1_uv.u = p1.vertex.u;
-				p1_uv.v = p1.vertex.v;
+				{
+					float OneOverZStart = 1.0f / Z1;
+					float OneOverZEnd = 1.0f / Z2;
+					UV UVOverZStart = {p0.vertex.u * OneOverZStart, p0.vertex.v * OneOverZStart};
+					UV UVOverZEnd = {p1.vertex.u * OneOverZEnd, p1.vertex.v * OneOverZEnd};
+
+					aOneOverZStart = OneOverZStart;
+					//aOneOverZEnd = OneOverZEnd;
+					aUVOverZStart = UVOverZStart;
+					aUVOverZEnd = UVOverZEnd;
+					//aStartPoint = Line.StartPoint;
+					//aEndPoint = Line.EndPoint;
+				}
+
+				//float OneOverZStart = aOneOverZStart;
+				//float OneOverZ = aOneOverZStart;
+				one_over_z = aOneOverZStart;
+				//float OneOverZEnd = aOneOverZEnd;
+				//UV UVOverZStart = aUVOverZStart;
+				UV UVOverZ = aUVOverZStart;
+				UV UVOverZEnd = aUVOverZEnd;
+				//StartPoint = aStartPoint;
+				//EndPoint = aEndPoint;
+
+				// set starting point
+				//YStart = (int)ROUND_TOP(StartPoint.Y);
+				//Height = ((int)ROUND_TOP(EndPoint.Y)) - YStart;
+
+				//float OverHeight = 1.0f / (float)Height;
+				float OverHeight = c.one_over_height_ceiled;
+
+				// interpolation
+				//XIt = (aEndPoint.X - aStartPoint.X) * OverHeight;
+				//OneOverZIt = (OneOverZEnd - OneOverZ) * OverHeight;
+				uv_over_z_it.u = (UVOverZEnd.u - UVOverZ.u) * OverHeight;
+				uv_over_z_it.v = (UVOverZEnd.v - UVOverZ.v) * OverHeight;
+
+				// sub pixel
+				//float	SubPixel = c.sub_pixel;
+				//X = StartPoint.X + (XIt * SubPixel);
+				//uv_over_z.u = UVOverZ + (UVOverZIt * SubPixel);
+
+				uv_over_z.u = aUVOverZStart.u + uv_over_z_it.u * c.sub_pixel;
+				uv_over_z.v = aUVOverZStart.v + uv_over_z_it.v * c.sub_pixel;
+
+				/*
+
+				    CEdgeStart GetPrepairedStartingEdge(const SLine& Line, const STriangleInfo& TriInfo)
+					{
+						CEdgeStart EdgeStart;
+						const SVert& StartPoint = TriInfo.TriMesh.v[Line.StartVertIndex];
+						const SVert& EndPoint = TriInfo.TriMesh.v[Line.EndVertIndex];
 
 
-				const float over_over_z_start = 1.0f / p0.screen_pos.z;
-				const float over_over_z_end = 1.0f / p1.screen_pos.z;
+						float Z1 = StartPoint.p.Z, Z2 = EndPoint.p.Z;
+						float OneOverZStart = 1.0f / Z1, OneOverZEnd = 1.0f / Z2;
+						CVec2f UVOverZStart = CVec2f(StartPoint.uv.X, StartPoint.uv.Y) * OneOverZStart;
+						CVec2f UVOverZEnd = CVec2f(EndPoint.uv.X, EndPoint.uv.Y) * OneOverZEnd;
+						EdgeStart.Recalculate(OneOverZStart, OneOverZEnd, UVOverZStart, UVOverZEnd, Line.StartPoint, Line.EndPoint);
+						return EdgeStart;
+					}
 
-				p0_uv_over_z.u = p0_uv.u * over_over_z_start;
-				p0_uv_over_z.v = p0_uv.v * over_over_z_start;
+					void Recalculate(float aOneOverZStart, float aOneOverZEnd, CVec2f aUVOverZStart, CVec2f aUVOverZEnd, CVec2f aStartPoint, CVec2f aEndPoint)
+					{
+						// set all values
+						OneOverZStart = aOneOverZStart;
+						OneOverZ = aOneOverZStart;
+						OneOverZEnd = aOneOverZEnd;
+						UVOverZStart = aUVOverZStart;
+						UVOverZ = aUVOverZStart;
+						UVOverZEnd = aUVOverZEnd;
+						StartPoint = aStartPoint;
+						EndPoint = aEndPoint;
 
+						// set starting point
+						YStart = (int)ROUND_TOP(StartPoint.Y);
+						Height = ((int)ROUND_TOP(EndPoint.Y)) - YStart;
+
+						float OverHeight = 1.0f / (float)Height;
+
+						// interpolation
+						XIt = (aEndPoint.X - aStartPoint.X) * OverHeight;
+						OneOverZIt = (OneOverZEnd - OneOverZ) * OverHeight;
+						UVOverZIt = (UVOverZEnd - UVOverZ) * OverHeight;
+
+						// sub pixel
+						float	SubPixel = (float) ROUND_TOP(StartPoint.Y) - StartPoint.Y;
+						X = StartPoint.X + (XIt * SubPixel);
+						UVOverZ = UVOverZ + (UVOverZIt * SubPixel);
+						OneOverZ = OneOverZ + (OneOverZIt * SubPixel);
+					}
+				 */
 				// TODO: Set 'user_defined_it'
 				// TODO: Set 'user_defined'
 				/*
@@ -558,6 +661,52 @@ void DrawSpotlightTri(float CenterX, float CenterY, float p2x, float p2y, float 
 
 	//AddRenderJob(ts);
 	ts.Draw();
+
+
+
+class CEdgeStart
+{
+public:
+	void Recalculate(float aOneOverZStart, float aOneOverZEnd, CVec2f aUVOverZStart, CVec2f aUVOverZEnd, CVec2f aStartPoint, CVec2f aEndPoint)
+	{
+		// set all values
+		OneOverZStart = aOneOverZStart;
+		OneOverZ = aOneOverZStart;
+		OneOverZEnd = aOneOverZEnd;
+		UVOverZStart = aUVOverZStart;
+		UVOverZ = aUVOverZStart;
+		UVOverZEnd = aUVOverZEnd;
+		StartPoint = aStartPoint;
+		EndPoint = aEndPoint;
+
+		// set starting point
+		YStart = (int)ROUND_TOP(StartPoint.Y);
+		Height = ((int)ROUND_TOP(EndPoint.Y)) - YStart;
+
+		float OverHeight = 1.0f / (float)Height;
+
+		// interpolation
+		XIt = (aEndPoint.X - aStartPoint.X) * OverHeight;
+		OneOverZIt = (OneOverZEnd - OneOverZ) * OverHeight;
+		UVOverZIt = (UVOverZEnd - UVOverZ) * OverHeight;
+
+		// sub pixel
+		float	SubPixel = (float) ROUND_TOP(StartPoint.Y) - StartPoint.Y;
+		X = StartPoint.X + (XIt * SubPixel);
+		UVOverZ = UVOverZ + (UVOverZIt * SubPixel);
+		OneOverZ = OneOverZ + (OneOverZIt * SubPixel);
+	}
+	float X;
+	float OneOverZStart, OneOverZ, OneOverZEnd;
+	CVec2f UVOverZStart, UVOverZ, UVOverZEnd;
+	CVec2f StartPoint, EndPoint;
+
+	CVec2f UVOverZIt;
+	float XIt;
+	float OneOverZIt;
+	int Height;
+	int YStart;
+};
 
 
 
@@ -840,8 +989,8 @@ typedef struct
 				const float one_over_z_it = (right.one_over_z - left.one_over_z) * one_over_width;
 				const float one_over_z 	= left.one_over_z + (one_over_z_it * sub_texel);
 
-				const UV uv_over_z_it 	= {(right.p0_uv_over_z.u - left.p0_uv_over_z.u) * one_over_width, (right.p0_uv_over_z.v - left.p0_uv_over_z.v) * one_over_width};
-				const UV uv_over_z 		= {left.p0_uv_over_z.u + (uv_over_z_it.u * sub_texel), left.p0_uv_over_z.v + (uv_over_z_it.v * sub_texel)};
+				const UV uv_over_z_it 	= {(right.uv_over_z.u - left.uv_over_z.u) * one_over_width, (right.uv_over_z.v - left.uv_over_z.v) * one_over_width};
+				const UV uv_over_z 		= {left.uv_over_z.u + (uv_over_z_it.u * sub_texel), left.uv_over_z.v + (uv_over_z_it.v * sub_texel)};
 
 				const float z = (1.0f/one_over_z);
 
@@ -1401,11 +1550,11 @@ typedef struct
 	{
 		using triangle_t 				= triangle_from_list_t<triangle_list_t>;
 		using vertex_t					= vertex_from_tri_t<triangle_t>;
-		using user_defined_iterators_t 	= std::conditional_t<detail::has_user_defined_iterators<draw_ctx_t>, std::decay_t<decltype(std::declval<draw_ctx_t>().begin)>, std::nullptr_t>;
 		if constexpr(requires{std::declval<draw_ctx_t>().begin;})
 		{
-			static_assert(detail::can_assign_vertex<vertex_t, user_defined_iterators_t>, "'begin' member found in 'draw_ctx_t' cannot assign a tri to it");
-			static_assert(detail::has_user_defined_iterators<draw_ctx_t>, 				"'begin' member found in 'draw_ctx_t' but does not satisfy the 'has_user_defined_iterators' conditions");
+			using user_defined_iterators_t = std::decay_t<decltype(std::declval<draw_ctx_t>().begin)>;
+			static_assert(detail::can_assign_vertex<vertex_t, user_defined_iterators_t>, 	"'begin' member found in 'draw_ctx_t' but cannot assign a tri to it");
+			static_assert(detail::has_user_defined_iterators<draw_ctx_t>, 					"'begin' member found in 'draw_ctx_t' but does not satisfy the 'has_user_defined_iterators' conditions");
 		}
 
 		detail::render_rasterize<draw_ctx_t>(triangles, camera, draw_hline_function, frame_width, frame_height);
