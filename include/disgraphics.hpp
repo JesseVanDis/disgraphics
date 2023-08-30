@@ -267,6 +267,16 @@ namespace dis
 			vertex_t  vertex;
 		};
 
+		template<typename user_defined_iterators_t>
+		struct screen_space_clipped_pt
+		{
+			dish::vec3 screen_pos;
+			user_defined_iterators_t user_defined; // xyz or uv ect... ( they need to be clipped as well )
+		};
+
+		template<typename user_defined_iterators_t>
+		using screen_space_clipped_pt_triangle = std::array<screen_space_clipped_pt<user_defined_iterators_t>, 3>;
+
 		template<triangle triangle_t>
 		using screen_space_triangle = std::array<screen_space_vertex<vertex_from_tri_t<triangle_t>>, 3>;
 
@@ -288,24 +298,23 @@ namespace dis
 				float y_start_ceiled, height_ceiled, one_over_height_ceiled, sub_pixel;
 			};
 
-			template<vector3 vertex_t>
-			set_precalculated set_base(const screen_space_vertex<vertex_t>& p0, const screen_space_vertex<vertex_t>& p1)
+			set_precalculated set_base(const vector3 auto& p0_screen_pos, const vector3 auto& p1_screen_pos)
 			{
 				set_precalculated c {
-					.y_start_ceiled 		= std::ceil(p0.screen_pos.y),
-					.height_ceiled 			= std::ceil(p1.screen_pos.y) - c.y_start_ceiled,
+					.y_start_ceiled 		= std::ceil(p0_screen_pos.y),
+					.height_ceiled 			= std::ceil(p1_screen_pos.y) - c.y_start_ceiled,
 					.one_over_height_ceiled = c.height_ceiled != 0.0f ? (1.0f / c.height_ceiled) : 0.0f,
-					.sub_pixel 				= c.y_start_ceiled - p0.screen_pos.y
+					.sub_pixel 				= c.y_start_ceiled - p0_screen_pos.y
 				};
 
 				//assert(height_ceiled != 0.0f); // this is going to be a division over 0 ! // TODO: handle this to avoid NaN
 
 				y_start    = static_cast<int>(c.y_start_ceiled);
 				height     = static_cast<int>(c.height_ceiled);
-				x_it 		= (p1.screen_pos.x - p0.screen_pos.x) * c.one_over_height_ceiled;
-				x			= p0.screen_pos.x + (x_it * c.sub_pixel);
-				z_it 		= (p1.screen_pos.z - p0.screen_pos.z) * c.one_over_height_ceiled;
-				z			= p0.screen_pos.z + (z_it * c.sub_pixel);
+				x_it 		= (p1_screen_pos.x - p0_screen_pos.x) * c.one_over_height_ceiled;
+				x			= p0_screen_pos.x + (x_it * c.sub_pixel);
+				z_it 		= (p1_screen_pos.z - p0_screen_pos.z) * c.one_over_height_ceiled;
+				z			= p0_screen_pos.z + (z_it * c.sub_pixel);
 
 				return c;
 			}
@@ -338,10 +347,9 @@ namespace dis
 				//uv_over_z.v += uv_over_z_it.v;
 			}
 
-			template<vector3 vertex_t>
-			void set(const screen_space_vertex<vertex_t>& p0, const screen_space_vertex<vertex_t>& p1)
+			void set(const screen_space_clipped_pt<user_defined_iterators_t>& p0, const screen_space_clipped_pt<user_defined_iterators_t>& p1)
 			{
-				const set_precalculated c = set_base(p0, p1);
+				const set_precalculated c = set_base(p0.screen_pos, p1.screen_pos);
 
 				using float_t = decltype(c.one_over_height_ceiled);
 
@@ -355,10 +363,10 @@ namespace dis
 				//   v     = start + v_it * c.sub_pixel
 
 				user_defined_iterators_t inv_start;
-				inv_start = p0.vertex;
+				inv_start = p0.user_defined;
 				inv_start *= -one_over_z;
 
-				user_defined_it = p1.vertex;
+				user_defined_it = p1.user_defined;
 				user_defined_it *= one_over_z_end;
 				user_defined_it += inv_start;
 				user_defined_it *= c.one_over_height_ceiled;
@@ -386,10 +394,9 @@ namespace dis
 				increment_base();
 			}
 
-			template<vector3 vertex_t>
-			void set(const screen_space_vertex<vertex_t>& p0, const screen_space_vertex<vertex_t>& p1)
+			void set(const screen_space_clipped_pt<user_defined_iterators_t>& p0, const screen_space_clipped_pt<user_defined_iterators_t>& p1)
 			{
-				set_base(p0, p1);
+				set_base(p0.screen_pos, p1.screen_pos);
 			}
 		};
 
@@ -472,21 +479,17 @@ namespace dis
 		}
 
 		/// no bounds checking here!
-		template<draw_horizontal_line_ctx draw_ctx_t, triangle triangle_t>
-		constexpr void draw_triangle_unsafe(const triangle_t& source_triangle, screen_space_triangle<triangle_t>& triangle, draw_horizontal_line_function<draw_ctx_t, triangle_t> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
+		template<draw_horizontal_line_ctx draw_ctx_t, triangle triangle_t, typename user_defined_iterators_t>
+		constexpr void draw_triangle_unsafe(const triangle_t& source_triangle, screen_space_clipped_pt_triangle<user_defined_iterators_t>& triangle, draw_horizontal_line_function<draw_ctx_t, triangle_t> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 		{
-			using vertex_t = vertex_from_tri_t<triangle_t>;
-			using screen_space_vertex_t = screen_space_vertex<vertex_t>;
-
-			using user_defined_iterators_t = std::conditional_t<has_user_defined_iterators<draw_ctx_t>, std::decay_t<decltype(std::declval<draw_ctx_t>().begin)>, std::nullptr_t>;
 			if constexpr(requires{std::declval<draw_ctx_t>().begin;})
 			{
 				static_assert(has_user_defined_iterators<draw_ctx_t>, "'begin' member found in 'draw_ctx_t' but does not satisfy the 'has_user_defined_iterators' conditions");
 			}
 
-            struct line {const screen_space_vertex_t& p0, &p1;};
+            struct line {const screen_space_clipped_pt<user_defined_iterators_t>& p0, &p1;};
 
-            std::sort(triangle.begin(), triangle.end(), [](const screen_space_vertex_t& a, const screen_space_vertex_t& b){return a.screen_pos.y < b.screen_pos.y;});
+            std::sort(triangle.begin(), triangle.end(), [](const auto& a, const auto& b){return a.screen_pos.y < b.screen_pos.y;});
 
             // take lines
             const line line_long  = {triangle[0], triangle[2]};
@@ -639,9 +642,22 @@ namespace dis
 
 		//std::array<std::array<screen_space_vertex_t, 3>, tris_capacity>		clipped_tris; // NOLINT
 
-		template<triangle triangle_t>
-		constexpr int clip_triangle(const vector3 auto& plane_pos, const vector3 auto& plane_normal, screen_space_triangle<triangle_t>& tri_in_out, screen_space_triangle<triangle_t>& tri_extra_out)
+		template<typename user_defined_iterators_t>
+		constexpr void clip_user_defined_iterators(const user_defined_iterators_t& from, user_defined_iterators_t& to_mut, float perc)
 		{
+			user_defined_iterators_t diff = from;
+			diff *= -1.0f;
+			diff += to_mut;
+			to_mut = diff;
+			to_mut *= perc;
+			to_mut += from;
+		}
+
+		template<typename user_defined_iterators_t>
+		constexpr int clip_triangle(const vector3 auto& plane_pos, const vector3 auto& plane_normal, screen_space_clipped_pt_triangle<user_defined_iterators_t>& tri_in_out, screen_space_clipped_pt_triangle<user_defined_iterators_t>& tri_extra_out)
+		{
+			using point_t = screen_space_clipped_pt<user_defined_iterators_t>;
+
 			const vector3 auto& a = tri_in_out[0].screen_pos;
 			const vector3 auto& b = tri_in_out[1].screen_pos;
 			const vector3 auto& c = tri_in_out[2].screen_pos;
@@ -681,7 +697,23 @@ namespace dis
 			{
 				const vector3 auto	tip_to_tip			= sub_xyz(triangle_tip, any_other_tip);
 				const bool 			should_cut_to_quad 	= (tip_to_tip.x*plane_normal.x + tip_to_tip.y*plane_normal.y + tip_to_tip.z*plane_normal.z) < 0.0f;
-				const std::decay_t<decltype(a)> points[] = {a, b, c, intersection_a_to_b, intersection_b_to_c, intersection_c_to_a};
+
+				struct from_to
+				{
+					std::uint_fast8_t from;
+					std::uint_fast8_t to;
+					float perc;
+				};
+
+				const float ab_perc = a_to_b_t * ab_len_inv;
+				const float bc_perc = b_to_c_t * bc_len_inv;
+				const float ca_perc = c_to_a_t * ab_len_inv;
+
+				const std::decay_t<decltype(a)> points[]  = {a, b, c, intersection_a_to_b, intersection_b_to_c, intersection_c_to_a};
+				const from_to 					from_tos[] = {{0,0,0}, {1,1,0}, {2,2,0}, {0,1,ab_perc}, {1,2,bc_perc}, {2,0,ca_perc}};
+
+				// tri_in_out[INDEX] 'targets' a=0 b=1,c=2, intersection_a_to_B=1, intersection_b_to_C=2, intersection_c_to_A=0
+				const std::uint_fast8_t targets[] = {0, 1, 2, 1, 2, 0};
 
 				struct // NOLINT
 				{
@@ -704,15 +736,46 @@ namespace dis
 
 				unsigned int num_tris = indices.num_indices - 2;
 				assert(num_tris == 1 || num_tris == 2);
-				tri_in_out[0].screen_pos = points[indices.indices[((0<<1u)+0u)&0b11u]];
-				tri_in_out[1].screen_pos = points[indices.indices[((0<<1u)+1u)&0b11u]];
-				tri_in_out[2].screen_pos = points[indices.indices[((0<<1u)+2u)&0b11u]];
+				std::uint_fast8_t t0_p0_index = indices.indices[((0<<1u)+0u)&0b11u];
+				std::uint_fast8_t t0_p1_index = indices.indices[((0<<1u)+1u)&0b11u];
+				std::uint_fast8_t t0_p2_index = indices.indices[((0<<1u)+2u)&0b11u];
+
+				tri_in_out[0].screen_pos = points[t0_p0_index];
+				tri_in_out[1].screen_pos = points[t0_p1_index];
+				tri_in_out[2].screen_pos = points[t0_p2_index];
+
+				if(t0_p0_index >= 3) // this point is new ( made by the cut )
+				{
+					clip_user_defined_iterators(tri_in_out[from_tos[t0_p0_index].from].user_defined, tri_in_out[from_tos[t0_p0_index].to].user_defined, from_tos[t0_p0_index].perc);
+				}
+				if(t0_p1_index >= 3) // this point is new ( made by the cut )
+				{
+					clip_user_defined_iterators(tri_in_out[from_tos[t0_p1_index].from].user_defined, tri_in_out[from_tos[t0_p1_index].to].user_defined, from_tos[t0_p1_index].perc);
+				}
+				if(t0_p2_index >= 3) // this point is new ( made by the cut )
+				{
+					clip_user_defined_iterators(tri_in_out[from_tos[t0_p2_index].from].user_defined, tri_in_out[from_tos[t0_p2_index].to].user_defined, from_tos[t0_p2_index].perc);
+				}
+				/*
+				if(p1_index < 3 && p0_index >= 3) // this point is new ( made by the cut )
+				{
+					vertex_t& target = targets[p0_index];
+
+
+					tri_in_out[p0_index].vertex = tri_in_out[p0_index].vertex;
+					auto diff =
+				}
+				 */
 
 				if(num_tris == 2)
 				{
-					tri_extra_out[0].screen_pos = points[indices.indices[((1<<1u)+0u)&0b11u]];
-					tri_extra_out[1].screen_pos = points[indices.indices[((1<<1u)+1u)&0b11u]];
-					tri_extra_out[2].screen_pos = points[indices.indices[((1<<1u)+2u)&0b11u]];
+					std::uint_fast8_t t1_p0_index = indices.indices[((1<<1u)+0u)&0b11u];
+					std::uint_fast8_t t1_p1_index = indices.indices[((1<<1u)+1u)&0b11u];
+					std::uint_fast8_t t1_p2_index = indices.indices[((1<<1u)+2u)&0b11u];
+
+					tri_extra_out[0].screen_pos = points[t1_p0_index];
+					tri_extra_out[1].screen_pos = points[t1_p1_index];
+					tri_extra_out[2].screen_pos = points[t1_p2_index];
 					return 1;
 				}
 			}
@@ -723,18 +786,15 @@ namespace dis
 			return 0;
 		}
 
-		template<draw_horizontal_line_ctx draw_ctx_t, triangle triangle_t>
-		constexpr void draw_triangle(const triangle_t& source_triangle, const screen_space_triangle<triangle_t>& triangle, draw_horizontal_line_function<draw_ctx_t, triangle_t> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height,
+		template<draw_horizontal_line_ctx draw_ctx_t, triangle triangle_t, typename user_defined_iterators_t>
+		constexpr void draw_triangle(const triangle_t& source_triangle, const screen_space_clipped_pt_triangle<user_defined_iterators_t>& triangle, draw_horizontal_line_function<draw_ctx_t, triangle_t> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height,
 									 unsigned_integral auto viewport_x_start, unsigned_integral auto viewport_y_start, unsigned_integral auto viewport_x_end, unsigned_integral auto viewport_y_end)
 		{
-			// clipping on edges
-
-			using vertex_t = vertex_from_tri_t<triangle_t>;
-			using screen_space_vertex_t = screen_space_vertex<vertex_t>;
+			using clipped_tri = screen_space_clipped_pt_triangle<user_defined_iterators_t>;
 			constexpr auto tris_capacity = (2*2*2*2)+1;
 
-			std::array<std::array<screen_space_vertex_t, 3>, tris_capacity>		clipped_tris; // NOLINT
-			std::uint_fast8_t 													clipped_tris_num = 0;
+			std::array<clipped_tri, tris_capacity>		clipped_tris; // NOLINT
+			std::uint_fast8_t 							clipped_tris_num = 0;
 
 			// first just add the main triangle
 			clipped_tris[clipped_tris_num++] = triangle;
@@ -747,7 +807,7 @@ namespace dis
 
 				for(std::uint_fast8_t i=clipped_tris_num; i--;)
 				{
-					std::array<screen_space_vertex_t, 3>& tri = clipped_tris[i];
+					clipped_tri& tri = clipped_tris[i];
 
 					const bool 					in_screen[3] 		= {tri[0].screen_pos.y < viewport_y_end, tri[1].screen_pos.y < viewport_y_end, tri[2].screen_pos.y < viewport_y_end};
 					const std::uint_fast8_t 	num_pts_in_screen 	= in_screen[0] + in_screen[1] + in_screen[2];
@@ -759,7 +819,7 @@ namespace dis
 					}
 					else if(num_pts_in_screen != 3) // otherwise nothing to clip. leave it
 					{
-						clipped_tris_num += clip_triangle<triangle_t>(o, n, tri, clipped_tris[clipped_tris_num]);
+						clipped_tris_num += clip_triangle<user_defined_iterators_t>(o, n, tri, clipped_tris[clipped_tris_num]);
 					}
 				}
 			}
@@ -771,7 +831,7 @@ namespace dis
 
 				for(std::uint_fast8_t i=clipped_tris_num; i--;)
 				{
-					std::array<screen_space_vertex_t, 3>& tri = clipped_tris[i];
+					clipped_tri& tri = clipped_tris[i];
 
 					const bool 					in_screen[3] 		= {tri[0].screen_pos.y > viewport_y_start, tri[1].screen_pos.y > viewport_y_start, tri[2].screen_pos.y > viewport_y_start};
 					const std::uint_fast8_t 	num_pts_in_screen 	= in_screen[0] + in_screen[1] + in_screen[2];
@@ -783,7 +843,7 @@ namespace dis
 					}
 					else if(num_pts_in_screen != 3) // otherwise nothing to clip. leave it
 					{
-						clipped_tris_num += clip_triangle<triangle_t>(o, n, tri, clipped_tris[clipped_tris_num]);
+						clipped_tris_num += clip_triangle<user_defined_iterators_t>(o, n, tri, clipped_tris[clipped_tris_num]);
 					}
 				}
 			}
@@ -795,7 +855,7 @@ namespace dis
 
 				for(std::uint_fast8_t i=clipped_tris_num; i--;)
 				{
-					std::array<screen_space_vertex_t, 3>& tri = clipped_tris[i];
+					clipped_tri& tri = clipped_tris[i];
 
 					const bool 					in_screen[3] 		= {tri[0].screen_pos.x > viewport_x_start, tri[1].screen_pos.x > viewport_x_start, tri[2].screen_pos.x > viewport_x_start};
 					const std::uint_fast8_t 	num_pts_in_screen 	= in_screen[0] + in_screen[1] + in_screen[2];
@@ -807,7 +867,7 @@ namespace dis
 					}
 					else if(num_pts_in_screen != 3) // otherwise nothing to clip. leave it
 					{
-						clipped_tris_num += clip_triangle<triangle_t>(o, n, tri, clipped_tris[clipped_tris_num]);
+						clipped_tris_num += clip_triangle<user_defined_iterators_t>(o, n, tri, clipped_tris[clipped_tris_num]);
 					}
 				}
 			}
@@ -819,7 +879,7 @@ namespace dis
 
 				for(std::uint_fast8_t i=clipped_tris_num; i--;)
 				{
-					std::array<screen_space_vertex_t, 3>& tri = clipped_tris[i];
+					clipped_tri& tri = clipped_tris[i];
 
 					const bool 					in_screen[3] 		= {tri[0].screen_pos.x < viewport_x_end, tri[1].screen_pos.x < viewport_x_end, tri[2].screen_pos.x < viewport_x_end};
 					const std::uint_fast8_t 	num_pts_in_screen 	= in_screen[0] + in_screen[1] + in_screen[2];
@@ -831,7 +891,7 @@ namespace dis
 					}
 					else if(num_pts_in_screen != 3) // otherwise nothing to clip. leave it
 					{
-						clipped_tris_num += clip_triangle<triangle_t>(o, n, tri, clipped_tris[clipped_tris_num]);
+						clipped_tris_num += clip_triangle<user_defined_iterators_t>(o, n, tri, clipped_tris[clipped_tris_num]);
 					}
 				}
 			}
@@ -843,10 +903,10 @@ namespace dis
 			}
 		}
 
-		template<draw_horizontal_line_ctx draw_ctx_t, triangle triangle_t>
-		constexpr void draw_triangle(const triangle_t& source_triangle, const screen_space_triangle<triangle_t>& triangle, draw_horizontal_line_function<draw_ctx_t, triangle_t> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
+		template<draw_horizontal_line_ctx draw_ctx_t, triangle triangle_t, typename user_defined_iterators_t>
+		constexpr void draw_triangle(const triangle_t& source_triangle, const screen_space_clipped_pt_triangle<user_defined_iterators_t>& triangle, draw_horizontal_line_function<draw_ctx_t, triangle_t> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 		{
-			draw_triangle<draw_ctx_t, triangle_t>(source_triangle, triangle, draw_hline_function, frame_width, frame_height, 1u, 1u, (frame_width-1), (frame_height-1));
+			draw_triangle<draw_ctx_t, triangle_t, user_defined_iterators_t>(source_triangle, triangle, draw_hline_function, frame_width, frame_height, 1u, 1u, (frame_width-1), (frame_height-1));
 		}
 
 		constexpr dish::mat4x4 create_perspective(float fovy, float aspect, float z_near, float z_far)
@@ -899,7 +959,10 @@ namespace dis
 		template<draw_horizontal_line_ctx draw_ctx_t, triangle_list triangle_list_t>
 		constexpr void render_rasterize(const triangle_list_t& triangles, const camera auto& camera, draw_horizontal_line_function<draw_ctx_t, triangle_from_list_t<triangle_list_t>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 		{
-			using triangle_t 			= std::decay_t<decltype(*triangles.begin())>;
+			using triangle_t 				= std::decay_t<decltype(*triangles.begin())>;
+			using user_defined_iterators_t 	= std::conditional_t<has_user_defined_iterators<draw_ctx_t>, std::decay_t<decltype(std::declval<draw_ctx_t>().begin)>, std::nullptr_t>;
+			using clipped_tri_t 				= screen_space_clipped_pt_triangle<user_defined_iterators_t>;
+
 
 			const float target_width_flt 	= static_cast<float>(frame_width);  // NOLINT
 			const float target_height_flt 	= static_cast<float>(frame_height); // NOLINT
@@ -917,24 +980,59 @@ namespace dis
 
 			for(const triangle auto& tri : triangles)
 			{
-				std::array<screen_space_triangle<triangle_t>, 2> clipped_tris; // NOLINT
+				std::array<clipped_tri_t, 2> clipped_tris; // NOLINT
 				size_t num_clipped_tris = 0;
 
-				clipped_tris[0][0].vertex = get_tri_pt<0>(tri);
-				clipped_tris[0][1].vertex = get_tri_pt<1>(tri);
-				clipped_tris[0][2].vertex = get_tri_pt<2>(tri);
-				clipped_tris[0][0].screen_pos = {clipped_tris[0][0].vertex.x, clipped_tris[0][0].vertex.y, clipped_tris[0][0].vertex.z};
-				clipped_tris[0][1].screen_pos = {clipped_tris[0][1].vertex.x, clipped_tris[0][1].vertex.y, clipped_tris[0][1].vertex.z};
-				clipped_tris[0][2].screen_pos = {clipped_tris[0][2].vertex.x, clipped_tris[0][2].vertex.y, clipped_tris[0][2].vertex.z};
+				const auto& vertex0 = get_tri_pt<0>(tri);
+				const auto& vertex1 = get_tri_pt<1>(tri);
+				const auto& vertex2 = get_tri_pt<2>(tri);
+
+				clipped_tris[0][0].user_defined = vertex0;
+				clipped_tris[0][1].user_defined = vertex1;
+				clipped_tris[0][2].user_defined = vertex2;
+				clipped_tris[0][0].screen_pos = {vertex0.x, vertex0.y, vertex0.z};
+				clipped_tris[0][1].screen_pos = {vertex1.x, vertex1.y, vertex1.z};
+				clipped_tris[0][2].screen_pos = {vertex2.x, vertex2.y, vertex2.z};
 				num_clipped_tris++;
 
 				// clip near
-				num_clipped_tris += clip_triangle<triangle_t>(near_clipping_plane_pos, near_clipping_plane_normal, clipped_tris[0], clipped_tris[1]);
+				num_clipped_tris += clip_triangle<user_defined_iterators_t>(near_clipping_plane_pos, near_clipping_plane_normal, clipped_tris[0], clipped_tris[1]);
 
 				for(size_t clipped_tri_index=0; clipped_tri_index < num_clipped_tris; clipped_tri_index++)
 				{
-					screen_space_triangle<triangle_t>& clipped_tris_result = clipped_tris[clipped_tri_index];
+					clipped_tri_t& clipped_tri = clipped_tris[clipped_tri_index];
 
+					const dish::vec4 p0 = {clipped_tri[0].screen_pos.x, clipped_tri[0].screen_pos.y, clipped_tri[0].screen_pos.z, 1};
+					const dish::vec4 p1 = {clipped_tri[1].screen_pos.x, clipped_tri[1].screen_pos.y, clipped_tri[1].screen_pos.z, 1};
+					const dish::vec4 p2 = {clipped_tri[2].screen_pos.x, clipped_tri[2].screen_pos.y, clipped_tri[2].screen_pos.z, 1};
+
+					const dish::vec4 p0_projview = mul(projview, p0);
+					const dish::vec4 p1_projview = mul(projview, p1);
+					const dish::vec4 p2_projview = mul(projview, p2);
+
+					assert(p0_projview.w != 0.0f);
+
+					clipped_tri[0].screen_pos.x = ((p0_projview.x / p0_projview.w) * 0.5f + 0.5f) * target_width_flt;
+					clipped_tri[0].screen_pos.y = ((p0_projview.y / p0_projview.w) * 0.5f + 0.5f) * target_height_flt;
+					clipped_tri[0].screen_pos.z = (p0_projview.z / p0_projview.w);
+
+					clipped_tri[1].screen_pos.x = ((p1_projview.x / p1_projview.w) * 0.5f + 0.5f) * target_width_flt;
+					clipped_tri[1].screen_pos.y = ((p1_projview.y / p1_projview.w) * 0.5f + 0.5f) * target_height_flt;
+					clipped_tri[1].screen_pos.z = (p1_projview.z / p1_projview.w);
+
+					clipped_tri[2].screen_pos.x = ((p2_projview.x / p2_projview.w) * 0.5f + 0.5f) * target_width_flt;
+					clipped_tri[2].screen_pos.y = ((p2_projview.y / p2_projview.w) * 0.5f + 0.5f) * target_height_flt;
+					clipped_tri[2].screen_pos.z = (p2_projview.z / p2_projview.w);
+
+					const float cross_z = (clipped_tri[1].screen_pos.x - clipped_tri[0].screen_pos.x) * (clipped_tri[2].screen_pos.y - clipped_tri[0].screen_pos.y) - (clipped_tri[2].screen_pos.x - clipped_tri[0].screen_pos.x) * (clipped_tri[1].screen_pos.y - clipped_tri[0].screen_pos.y);
+					const bool backface_culling = cross_z > 0.0f;
+
+					if(backface_culling)
+					{
+						draw_triangle<draw_ctx_t, triangle_t, user_defined_iterators_t>(tri, clipped_tri, draw_hline_function, frame_width, frame_height);
+					}
+
+#if 0
 					// officially the below should be done, but clip is not ready for this yet ( it only clips on 'screen_pos' level )
 #if 0
 					get_tri_pt<0>(clipped_tri) = clipped_tris_result[0].vertex;
@@ -982,6 +1080,7 @@ namespace dis
 					{
 						draw_triangle<draw_ctx_t, triangle_t>(tri, clipped_tris_result, draw_hline_function, frame_width, frame_height);
 					}
+#endif
 				}
 			}
 		}
