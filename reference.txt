@@ -1,0 +1,1086 @@
+
+#include "Rasterizer.h"
+
+#define MAXUV 3
+#define MAXVERT 3
+
+#define MAX_TRIES_PER_JOB 100
+
+
+typedef struct
+{
+	float X, Y, Z;
+	inline CVec3f& AsVert(){return *(CVec3f*)&X;};
+	inline const CVec3f& AsVert() const{return *(CVec3f*)&X;};
+
+}S3f;
+
+typedef struct
+{
+	float X, Y;
+	inline CVec2f& AsVert(){return *(CVec2f*)&X;};
+	inline const CVec2f& AsVert() const{return *(CVec2f*)&X;};
+
+}S2f;
+
+typedef struct
+{
+	S3f p;
+	S2f uv;
+}SVert;
+
+typedef struct
+{
+	union
+	{
+		struct {SVert v1, v2, v3;};
+		SVert v[3];
+	};
+}STriMesh;
+
+bool InitJobs();
+void DrawTri(CRasterizerScreen& Screen, const CVec3f& v1, const CVec3f& v2, const CVec3f& v3, const CVec2f& UV1, const CVec2f& UV2, const CVec2f& UV3);
+
+// view
+static float sVOF = 2.0f;
+
+// 3d
+static int sDrawMode = 0;
+static struct {int Index; CVec3f v[MAXVERT];}sVerts = {0};
+static struct {int Index; CVec2f UVs[MAXUV];}sTextCoords = {0};
+
+static CRasterizerScreen sScreenInfo(0, 0, 0, NULL);
+static CRast_Material* sMaterial = NULL;
+
+// textures
+typedef struct{UInt* TextBuffer; CVec2i TextSize;}STexture;
+static CVector<STexture> sTextureList;
+int sBindedTexture = 0;
+
+// matrix
+CVector<CMatrixTrans> sMatrixStack;
+CMatrixTrans sCurrentMatrixState;
+
+//CRasterizerScreen ScreenInfos;
+
+void CRasterizer::sInitialize(UInt* ScreenBuffer, UInt ScreenSizeX, UInt ScreenSizeY, UInt Pitch, float ClipAngleTop, float ClipAngleBottom, float ClipAngleLeft, float ClipAngleRight)
+{
+	sScreenInfo = CRasterizerScreen(ScreenSizeX, ScreenSizeY, Pitch, ScreenBuffer);
+	unsigned int WhiteColor = 0xffffff;
+	sBindedTexture = sGenTexture(&WhiteColor, 1, 1);
+	assert(sBindedTexture == 0); // first initialize before loading a texture
+	sMatrixStack.push_back(CMatrixTrans());
+	//sCurrentMatrixState.m22 = -1;
+	//(*sMatrixStack.rbegin()).m22 = -1;
+
+
+	float DegHor = 10.0f;
+	float DegVer = 10.0f;
+
+	CPlane& B = sScreenInfo.sClippingPlanes[1];
+	CMatrixRot TempM;
+	TempM.LPitch(ClipAngleBottom * DEG_TO_RAD);
+	B.Normal = TempM.LUp();
+
+	CPlane& U = sScreenInfo.sClippingPlanes[4];
+	TempM.SetIdentity();
+	TempM.LPitch(ClipAngleTop * DEG_TO_RAD);
+	U.Normal = -TempM.LUp();
+
+	CPlane& L = sScreenInfo.sClippingPlanes[2];
+	TempM.SetIdentity();
+	TempM.LYaw(ClipAngleLeft * DEG_TO_RAD);
+	L.Normal = -TempM.LRight();
+
+	CPlane& R = sScreenInfo.sClippingPlanes[3];
+	TempM.SetIdentity();
+	TempM.LYaw(ClipAngleRight * DEG_TO_RAD);
+	R.Normal = TempM.LRight();
+
+	CPlane& N = sScreenInfo.sClippingPlanes[0];
+	TempM.SetIdentity();
+	N.Normal = TempM.LForward();
+	N.Pos.Z = -0.4f;
+	InitJobs();
+}
+
+int CRasterizer::sBindTexture(int TextureId)
+{
+	sBindedTexture = TextureId;
+	return 1;
+}
+
+int CRasterizer::sGenTexture(unsigned int* Buffer, unsigned int Width, unsigned int Height)
+{
+	STexture& Tex = sTextureList.PushBackGet(STexture());
+	Tex.TextBuffer = new UInt[Width*Height]();
+	Tex.TextSize.X = Width;
+	Tex.TextSize.Y = Height;
+	memcpy(Tex.TextBuffer, Buffer, 3 * Width * Height);
+	return sTextureList.size() - 1;
+}
+
+void CRasterizer::sFreeTextures()
+{
+	for(UInt i=0; i<sTextureList.size(); i++)
+		delete[] sTextureList[i].TextBuffer;
+	sTextureList.clear();
+}
+
+void CRasterizer::sClear()
+{
+	sScreenInfo.ClearZBuffer();
+	memset(sScreenInfo.mPixelBuffer, 0x0, sizeof(UInt) * sScreenInfo.mHeight * sScreenInfo.mPitch);
+}
+
+void CRasterizer::sTranslatef(float X, float Y, float Z)
+{
+	sCurrentMatrixState.Translate(X, Y, Z);
+}
+void CRasterizer::sRotatef(float Degrees, float X, float Y, float Z)
+{
+	sCurrentMatrixState.LRotate(Degrees * DEG_TO_RAD, X, Y, Z);
+}
+void CRasterizer::sLoadIdentity()
+{
+	sCurrentMatrixState.SetIdentity();
+}
+void CRasterizer::sMulMatrix(float* m4b4)
+{
+	float m[16], r[16];
+	sCurrentMatrixState.ToArray(m);
+	MATRIX_MUL_TO(m4b4, 4, 4, m, 4, 4, r);
+	sCurrentMatrixState.Set(r);
+}
+
+void CRasterizer::sGetMatrix(float* Output)
+{
+	sCurrentMatrixState.ToArray(Output);
+}
+
+void CRasterizer::sPushMatrix()
+{
+	assert(sMatrixStack.size() != 0);// You added 1 pop too much
+	(*sMatrixStack.rbegin()) = sCurrentMatrixState;
+	sMatrixStack.push_back(CMatrixTrans());
+	//sCurrentMatrixState.SetIdentity();
+}
+void CRasterizer::sPopMatrix()
+{
+	sMatrixStack.pop_back();
+	assert(sMatrixStack.size() != 0);// You added 1 pop too much
+	sCurrentMatrixState = *sMatrixStack.rbegin();
+}
+
+void CRasterizer::sBegin()
+{
+	sDrawMode = 1;
+}
+
+#define MATRIX_MUL(MatrixAInOut, MatrixARows, MatrixAcolumns, MatrixBIn, MatrixBRows, MatrixBcolumns) \
+{ \
+	float CalculatedMatrix[MatrixARows * MatrixBcolumns]; \
+	MATRIX_MUL_TO((MatrixAInOut), MatrixARows, MatrixAcolumns, (MatrixBIn), MatrixBRows, MatrixBcolumns, CalculatedMatrix) \
+	memcpy((MatrixAInOut), CalculatedMatrix, sizeof(float) * MatrixARows * MatrixBcolumns); \
+}
+
+void CRasterizer::sVertex3f(float X, float Y, float Z)
+{
+	CVec3f Pos(	X*sCurrentMatrixState.m00 + Y*sCurrentMatrixState.m01 + Z*sCurrentMatrixState.m02 + sCurrentMatrixState.m03,
+							X*sCurrentMatrixState.m10 + Y*sCurrentMatrixState.m11 + Z*sCurrentMatrixState.m12 + sCurrentMatrixState.m13,
+							X*sCurrentMatrixState.m20 + Y*sCurrentMatrixState.m21 + Z*sCurrentMatrixState.m22 + sCurrentMatrixState.m23);
+
+	sVerts.v[sVerts.Index] = Pos;
+	sVerts.Index++;
+	if(sVerts.Index >= MAXVERT)
+	{
+		assert(sScreenInfo.mPixelBuffer);// initialize screen first
+
+		DrawTri(sScreenInfo, sVerts.v[0], sVerts.v[1], sVerts.v[2], sTextCoords.UVs[0], sTextCoords.UVs[1], sTextCoords.UVs[2]);
+		sVerts.Index = 0;
+	}
+}
+void CRasterizer::sTexCoord2f(float U, float V)
+{
+	sTextCoords.UVs[sTextCoords.Index] = CVec2f(U, V);
+	sTextCoords.Index++;
+	sTextCoords.Index = sTextCoords.Index % MAXUV;
+}
+void CRasterizer::sEnd()
+{
+	sDrawMode = 0;
+	sVerts.Index = 0;
+	sTextCoords.Index = 0;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+class CEdgeStart
+{
+public:
+	void Recalculate(float aOneOverZStart, float aOneOverZEnd, CVec2f aUVOverZStart, CVec2f aUVOverZEnd, CVec2f aStartPoint, CVec2f aEndPoint)
+	{
+		// set all values
+		OneOverZStart = aOneOverZStart;
+		OneOverZ = aOneOverZStart;
+		OneOverZEnd = aOneOverZEnd;
+		UVOverZStart = aUVOverZStart;
+		UVOverZ = aUVOverZStart;
+		UVOverZEnd = aUVOverZEnd;
+		StartPoint = aStartPoint;
+		EndPoint = aEndPoint;
+
+		// set starting point
+		YStart = (int)ROUND_TOP(StartPoint.Y);
+		Height = ((int)ROUND_TOP(EndPoint.Y)) - YStart;
+
+		float OverHeight = 1.0f / (float)Height;
+
+		// interpolation
+		XIt = (aEndPoint.X - aStartPoint.X) * OverHeight;
+		OneOverZIt = (OneOverZEnd - OneOverZ) * OverHeight;
+		UVOverZIt = (UVOverZEnd - UVOverZ) * OverHeight;
+
+		// sub pixel
+		float	SubPixel = (float) ROUND_TOP(StartPoint.Y) - StartPoint.Y;
+		X = StartPoint.X + (XIt * SubPixel);
+		UVOverZ = UVOverZ + (UVOverZIt * SubPixel);
+		OneOverZ = OneOverZ + (OneOverZIt * SubPixel);
+	}
+	float X;
+	float OneOverZStart, OneOverZ, OneOverZEnd;
+	CVec2f UVOverZStart, UVOverZ, UVOverZEnd;
+	CVec2f StartPoint, EndPoint;
+
+	CVec2f UVOverZIt;
+	float XIt;
+	float OneOverZIt;
+	int Height;
+	int YStart;
+};
+
+typedef struct {char StartVertIndex, EndVertIndex;CVec2f StartPoint, EndPoint;}SLine;
+typedef struct{CVec2f StartPoint, EndPoint;}S2Vect2f;
+typedef struct
+{
+	SLine LeadingLine, TailingLines[2];
+	STriMesh TriMesh;
+	//CRast_Vertex* MeshVerts[3];
+}STriangleInfo;
+typedef struct{CEdgeStart LeadingEdgeStart, TailingLineEdgeStart1, TailingLineEdgeStart2;}STriLineToScreenInfo;
+typedef struct{CEdgeStart Edge;S2Vect2f Line;}SLineInfo;
+
+inline CVec3f PositionFromMatrix(const CMatrixTrans& Matrix, const CVec3f& LocalOffset)
+{
+	CVec3f p = LocalOffset; CMatrixTrans t;
+	t.GetOrientation().Mul(Matrix.GetOrientation()); t.TranslateLocally(p);
+	return t.GetPos() + Matrix.GetPos();
+}
+
+inline CVec3f TranslateToCamera(CVec3f Point, const CMatrixTrans& CameraMatrix)
+{
+	const CMatrixRot& RotCam = CameraMatrix.GetOrientation();
+	CMatrixTrans t = CameraMatrix, Vec;
+	CVec3f v = Point;
+	Vec.GetPos() = v;
+	t.GetOrientation().SetIdentity();
+	Vec.Mul(t.GetInversed());
+	t.SetPos(0, 0, 0);
+	t.GetOrientation() = RotCam;
+	Vec.Mul(t);
+	v = Vec.GetPos();
+	return v;
+}
+
+inline CEdgeStart GetPrepairedStartingEdge(const SLine& Line, const STriangleInfo& TriInfo)
+{
+	CEdgeStart EdgeStart;
+	const SVert& StartPoint = TriInfo.TriMesh.v[Line.StartVertIndex];
+	const SVert& EndPoint = TriInfo.TriMesh.v[Line.EndVertIndex];
+
+
+	float Z1 = StartPoint.p.Z, Z2 = EndPoint.p.Z;
+	float OneOverZStart = 1.0f / Z1, OneOverZEnd = 1.0f / Z2;
+	CVec2f UVOverZStart = CVec2f(StartPoint.uv.X, StartPoint.uv.Y) * OneOverZStart;
+	CVec2f UVOverZEnd = CVec2f(EndPoint.uv.X, EndPoint.uv.Y) * OneOverZEnd;
+	EdgeStart.Recalculate(OneOverZStart, OneOverZEnd, UVOverZStart, UVOverZEnd, Line.StartPoint, Line.EndPoint);
+	return EdgeStart;
+}
+
+const float SREENCENTERX = SCRWIDTH / 2;
+const float SREENCENTERY = SCRHEIGHT / 2;
+float testtt = 0.0f;
+inline bool Convert3DVertexesTo2DLines(const SVert& v0, const SVert& v1, const SVert& v2, SLine& LeadingLineOut, SLine& TailingLine1Out, SLine& TailingLine2Out, UInt PointIndicesTopToBottomOut[3], float UnitScale = 1000.5f)
+{
+	// do not draw when behind screen
+	//printf("%f, %f, %f\r", v0.Z, v1.Z, v2.Z);
+	if((v0.p.Z > 0.0f) && (v1.p.Z > 0.0f) && (v2.p.Z > 0.0f))
+	{
+		return false;
+	}
+
+	if((v0.p.Z * v1.p.Z * v2.p.Z) == 0.0f)
+		return false;
+
+	// convert 3d to 2d
+	float FOV = sVOF;
+	CVec2f p[3];
+	p[0].X = (SREENCENTERX + ((v0.p.X * UnitScale) / (-v0.p.Z * FOV)));
+	p[0].Y = (SREENCENTERY + ((v0.p.Y * UnitScale) / (-v0.p.Z * FOV)));
+	p[1].X = (SREENCENTERX + ((v1.p.X * UnitScale) / (-v1.p.Z * FOV)));
+	p[1].Y = (SREENCENTERY + ((v1.p.Y * UnitScale) / (-v1.p.Z * FOV)));
+	p[2].X = (SREENCENTERX + ((v2.p.X * UnitScale) / (-v2.p.Z * FOV)));
+	p[2].Y = (SREENCENTERY + ((v2.p.Y * UnitScale) / (-v2.p.Z * FOV)));
+
+
+
+	// flip Y Axis (now correct coordinate axis muhaha)
+	p[0].Y = SCRHEIGHT - p[0].Y; p[1].Y = SCRHEIGHT - p[1].Y; p[2].Y = SCRHEIGHT - p[2].Y;
+
+	// backface culling
+	if(Sign(p[2], p[0], p[1]) > 0.0f)
+		return false;
+
+	// get highest point index, lowest point index, and remaining point index
+	UInt& HighestPointIndex = PointIndicesTopToBottomOut[0];
+	UInt& RemainingPointIndex = PointIndicesTopToBottomOut[1];
+	UInt& LowestPointIndex = PointIndicesTopToBottomOut[2];
+	if(p[1].Y < p[0].Y)
+	{
+		if(p[2].Y < p[1].Y)
+		{
+			HighestPointIndex = 2;
+			if(p[1].Y > p[0].Y) {LowestPointIndex = 1; RemainingPointIndex = 0;}
+			else{LowestPointIndex = 0; RemainingPointIndex = 1;}
+		}
+		else
+		{
+			HighestPointIndex = 1;
+			if(p[2].Y > p[0].Y) {LowestPointIndex = 2; RemainingPointIndex = 0;}
+			else{LowestPointIndex = 0; RemainingPointIndex = 2;}
+		}
+	}
+	else if(p[2].Y < p[0].Y)
+	{
+		HighestPointIndex = 2;
+		if(p[1].Y > p[0].Y){LowestPointIndex = 1; RemainingPointIndex = 0;}
+		else{LowestPointIndex = 0; RemainingPointIndex = 1;}
+	}
+	else
+	{
+		HighestPointIndex = 0;
+		if(p[2].Y > p[1].Y){LowestPointIndex = 2; RemainingPointIndex = 1;}
+		else{LowestPointIndex = 1; RemainingPointIndex = 2;}
+	}
+	LeadingLineOut.StartVertIndex = HighestPointIndex; LeadingLineOut.EndVertIndex = LowestPointIndex; LeadingLineOut.StartPoint = p[HighestPointIndex]; LeadingLineOut.EndPoint = p[LowestPointIndex];
+	TailingLine1Out.StartVertIndex = HighestPointIndex; TailingLine1Out.EndVertIndex = RemainingPointIndex; TailingLine1Out.StartPoint = p[HighestPointIndex]; TailingLine1Out.EndPoint = p[RemainingPointIndex];
+	TailingLine2Out.StartVertIndex = RemainingPointIndex; TailingLine2Out.EndVertIndex = LowestPointIndex; TailingLine2Out.StartPoint = p[RemainingPointIndex]; TailingLine2Out.EndPoint = p[LowestPointIndex];
+	return true;
+}
+
+static inline __m128i MulInts4(const __m128i &a, const __m128i &b)
+{
+#ifdef __SSE4_1__  // modern CPU - use SSE 4.1
+	return _mm_mullo_epi32(a, b);
+#else               // old CPU - use SSE 2
+	__m128i tmp1 = _mm_mul_epu32(a,b); /* mul 2,0*/
+	__m128i tmp2 = _mm_mul_epu32( _mm_srli_si128(a,4), _mm_srli_si128(b,4)); /* mul 3,1 */
+	return _mm_unpacklo_epi32(_mm_shuffle_epi32(tmp1, _MM_SHUFFLE (0,0,2,0)), _mm_shuffle_epi32(tmp2, _MM_SHUFFLE (0,0,2,0))); /* shuffle results to [63..0] and pack */
+#endif
+}
+
+typedef struct
+{
+	int TopY;
+	int StartY, EndY, EndX;
+	float OneOverZEnd;
+	CEdgeStart LeadingEdgeStart;
+	CEdgeStart TailingLineEdgeStart1;
+	CEdgeStart TailingLineEdgeStart2;
+	int RemainingVertDirection;
+
+	float* DepthBuffer;
+	UInt* Buffer;
+	UInt Pitch;
+
+	float TextureSizeXf;
+	float TextureSizeYf;
+	CVec2i TextureSize;
+	int TextSizeXMin1;
+	int TextSizeYMin1;
+	unsigned char* TextureBuffer;
+	unsigned char* OrTextureBuffer;
+
+
+	inline void Draw()
+	{
+		unsigned char LocalTexBuffer[128*128];
+		OrTextureBuffer = TextureBuffer;
+		TextureBuffer = LocalTexBuffer;
+		memcpy(TextureBuffer, OrTextureBuffer, TextureSize.X * TextureSize.Y * 3);
+
+		CEdgeStart* RightEdge = NULL;
+		CEdgeStart* LeftEdge = NULL;
+		if(RemainingVertDirection > 0)
+		{
+			LeftEdge = TailingLineEdgeStart1.Height <= 0 ? &TailingLineEdgeStart2 : &TailingLineEdgeStart1;
+			RightEdge = &LeadingEdgeStart;
+		}
+		else
+		{
+			LeftEdge = &LeadingEdgeStart;
+			RightEdge = TailingLineEdgeStart1.Height <= 0 ? &TailingLineEdgeStart2 : &TailingLineEdgeStart1;
+		}
+
+		__m128 TextureSizeXf4 = _mm_set_ps1(TextureSizeXf);
+		__m128 TextureSizeYf4 = _mm_set_ps1(TextureSizeYf);
+		__m128i TextureSizeXi4 = _mm_set1_epi32(TextureSize.X);
+		__m128i TextureSizeYi4 = _mm_set1_epi32(TextureSize.Y);
+		__m128i TextSizeXMinOne4 = _mm_set1_epi32(TextSizeXMin1);
+		__m128i TextSizeYMinOne4 = _mm_set1_epi32(TextSizeYMin1);
+
+		int LeadingEdgeStartY = LeadingEdgeStart.YStart;
+
+		//if((*DepthBufferPos) < Z)
+
+		//float WidthLeading = ((float)EndX - LeadingEdgeStart.X);
+
+		//UInt BufferPosVert1 = LeadingEdgeStart.X + (LeadingEdgeStart.YStart *Pitch);
+		//UInt BufferPosVert2 = TailingLineEdgeStart2.X + (TailingLineEdgeStart2.YStart *Pitch);
+		//UInt BufferPosVert3 = EndX + (EndY *Pitch);
+		//float Vert1Z = 1.0f / LeadingEdgeStart.OneOverZ;
+		//float Vert2Z = 1.0f / TailingLineEdgeStart2.OneOverZ;
+		//float Vert3Z = 1.0f / TailingLineEdgeStart2.OneOverZ * TailingLineEdgeStart2.OneOverZIt * TailingLineEdgeStart2.Height;  //OneOverZEnd
+		//float* DepthBufferPosVert1 = &DepthBuffer[BufferPosVert1];
+		//float* DepthBufferPosVert2 = &DepthBuffer[BufferPosVert2];
+		//float* DepthBufferPosVert3 = &DepthBuffer[BufferPosVert3];
+
+
+		//if(((*DepthBufferPosVert1) > Vert1Z) && ((*DepthBufferPosVert2) > Vert2Z) && ((*DepthBufferPosVert3) > Vert3Z))
+		//return;
+
+		for(int Y=StartY; Y<EndY; ++Y)
+		{
+			int XLeft = (int)(LeftEdge->X);
+			int XRight = (int)(RightEdge->X);
+
+			float Width = RightEdge->X - LeftEdge->X;
+			float OneOverWidth = 1.0f / Width;
+
+			float	SubTexel = ((float)XLeft) - LeftEdge->X;
+
+			float OneOverZIt = (RightEdge->OneOverZ - LeftEdge->OneOverZ) * OneOverWidth;
+			float OneOverZItMul4 = OneOverZIt * 4.0f;
+			float OneOverZ = LeftEdge->OneOverZ + (OneOverZIt * SubTexel);
+
+			CVec2f UVOverZIt = (RightEdge->UVOverZ - LeftEdge->UVOverZ) * OneOverWidth;
+			CVec2f UVOverZItMul4 = (RightEdge->UVOverZ - LeftEdge->UVOverZ) * OneOverWidth * 4.0f;
+			CVec2f UVOverZ = LeftEdge->UVOverZ + (UVOverZIt * SubTexel);
+
+			// get buffer items
+			UInt BufferPos = XLeft + (Y*Pitch);
+			float* DepthBufferPos = &DepthBuffer[BufferPos];
+			UInt* CurrentBufferPos = &Buffer[BufferPos];
+
+
+
+			UInt LineWidth = XRight - XLeft;
+			UInt RAligned = (XLeft + LineWidth) - (LineWidth & 3);
+
+			//for(UInt X4 = XLeft; X4 < RAligned; X4+=4)
+			//{
+			//	// defaults
+			//	__m128 One4 = _mm_set_ps1(1.0f);
+			//	__m128i Three4 = _mm_set1_epi32(3);
+			//	__m128 OneOverZ4 = _mm_set_ps(OneOverZ + (OneOverZIt*3.0f), OneOverZ + (OneOverZIt*2.0f), OneOverZ + (OneOverZIt*1.0f), OneOverZ + (OneOverZIt*0.0f));
+			//	__m128 UVOverZ4x = _mm_set_ps(UVOverZ.X + (UVOverZIt.X*3.0f), UVOverZ.X + (UVOverZIt.X*2.0f), UVOverZ.X + (UVOverZIt.X*1.0f), UVOverZ.X + (UVOverZIt.X*0.0f));
+			//	__m128 UVOverZ4y = _mm_set_ps(UVOverZ.Y + (UVOverZIt.Y*3.0f), UVOverZ.Y + (UVOverZIt.Y*2.0f), UVOverZ.Y + (UVOverZIt.Y*1.0f), UVOverZ.Y + (UVOverZIt.Y*0.0f));
+
+			//	// calc. z
+			//	union{__m128 Z4; float Za[4];}; Z4 = _mm_div_ps(One4, OneOverZ4);
+
+			//	// calc. uv
+			//	union{__m128 u4; float Ua[4];}; u4 = _mm_mul_ps(Z4, UVOverZ4x);
+			//	union{__m128 v4; float Va[4];}; v4 = _mm_mul_ps(Z4, UVOverZ4y);
+
+			//	float* StartDept = DepthBufferPos;
+			//	union{__m128 d4; float Da[4];}; d4 = _mm_set_ps((*(DepthBufferPos+3)), (*(DepthBufferPos+2)), (*(DepthBufferPos+1)), (*(DepthBufferPos+0)));
+
+			//	// z read / write
+			//	union{__m128 OnTop4; float OnTopa[4]; UInt OnTopia[4];}; OnTop4 = _mm_cmplt_ps(d4, Z4);
+			//	__m128 z4And = _mm_and_ps(Z4, OnTop4);
+			//	union{__m128i m4i; __m128 m4f;}; m4i = _mm_set1_epi32(0xffffffff);
+			//	__m128 t = _mm_xor_ps(m4f, OnTop4);
+
+			//	d4 = _mm_and_ps(d4, t);
+			//	d4 = _mm_add_ps(d4, z4And);
+
+			//	// uv to texture point
+			//	union{__m128i tu4; UInt tua[4];};
+			//	union{__m128i tv4; UInt tva[4];};
+
+			//	//tu4 = _mm_and_si128(_mm_cvtps_epi32(_mm_mul_ps(u4, TextureSizeXf4)), TextSizeXMinOne4);
+			//	//tv4 = _mm_and_si128(_mm_cvtps_epi32(_mm_mul_ps(v4, TextureSizeYf4)), TextSizeYMinOne4);
+
+			//	for(UInt i=0; i<4; i++)
+			//	{
+			//		float u = Ua[i];
+			//		float v = Va[i];
+
+			//		UInt tu = (UInt)(u * TextureSizeXf);
+			//		UInt tv = (UInt)(v * TextureSizeYf);
+			//		tu = tu & TextSizeXMin1;
+			//		tv = tv & TextSizeYMin1;
+
+			//		tua[i] = tu;
+			//		tva[i] = tv;
+			//	}
+
+			//	// color from texture point
+			//	union{__m128i Addr4; UInt Addra[4];};
+			//	Addr4 = MulInts4(_mm_add_epi32(tu4, MulInts4(tv4, TextureSizeXi4)), Three4);
+			//	__m128i c4 = _mm_set_epi32(*((UInt*)&TextureBuffer[Addra[3]]), *((UInt*)&TextureBuffer[Addra[2]]), *((UInt*)&TextureBuffer[Addra[1]]), *((UInt*)&TextureBuffer[Addra[0]]));
+
+			//	union{__m128i r4; UInt ra[4];};
+			//	r4 = _mm_and_si128(c4, _mm_set1_epi32(0xffffff));
+
+			//	// write
+			//	memcpy(DepthBufferPos, &Da[0], sizeof(float) * 4);
+
+			//	if(OnTopia[0]) (*CurrentBufferPos) = ra[0];
+			//	if(OnTopia[1]) (*(CurrentBufferPos+1)) = ra[1];
+			//	if(OnTopia[2]) (*(CurrentBufferPos+2)) = ra[2];
+			//	if(OnTopia[3]) (*(CurrentBufferPos+3)) = ra[3];
+
+			//	OneOverZ += OneOverZItMul4;
+			//	UVOverZ.X += UVOverZItMul4.X;
+			//	UVOverZ.Y += UVOverZItMul4.Y;
+			//	CurrentBufferPos+=4;
+			//	DepthBufferPos+=4;
+			//}
+
+			//(*CurrentBufferPos) = 0xffffff;
+
+			//for(int X = RAligned; X <= XRight; ++X)
+			for(int X = XLeft; X <= XRight; ++X)
+			{
+				float Z = (1.0f/OneOverZ);
+
+				if((*DepthBufferPos) < Z)
+				{
+					float u = UVOverZ.X * Z;
+					float v = UVOverZ.Y * Z;
+					(*DepthBufferPos) = Z;
+
+
+					UInt tu = (UInt)(u * TextureSizeXf);
+					UInt tv = (UInt)(v * TextureSizeYf);
+					tu = tu & TextSizeXMin1;
+					tv = tv & TextSizeYMin1;
+
+					unsigned char* ptr = &(TextureBuffer[((tu + (tv*TextureSize.X)) * 3)]);
+					UInt c = *(UInt*)ptr;
+					c = c & 0xffffff;
+
+					(*CurrentBufferPos) = c;
+
+				}
+				OneOverZ += OneOverZIt;
+				UVOverZ.X += UVOverZIt.X;
+				UVOverZ.Y += UVOverZIt.Y;
+				CurrentBufferPos++;
+				DepthBufferPos++;
+			}
+
+			// interpolate
+			RightEdge->X += RightEdge->XIt;
+			LeftEdge->X += LeftEdge->XIt;
+			RightEdge->OneOverZ += RightEdge->OneOverZIt;
+			LeftEdge->OneOverZ += LeftEdge->OneOverZIt;
+			RightEdge->UVOverZ.X += RightEdge->UVOverZIt.X;
+			RightEdge->UVOverZ.Y += RightEdge->UVOverZIt.Y;
+			LeftEdge->UVOverZ.X += LeftEdge->UVOverZIt.X;
+			LeftEdge->UVOverZ.Y += LeftEdge->UVOverZIt.Y;
+
+			// swap loading edges if needed
+			if((Y-LeadingEdgeStartY) >= RightEdge->Height-1)
+				RightEdge = &TailingLineEdgeStart2;
+			if((Y-LeadingEdgeStartY) >= LeftEdge->Height-1)
+				LeftEdge = &TailingLineEdgeStart2;
+		}
+
+		TextureBuffer = OrTextureBuffer;
+	}
+}STriangleSection;
+
+class CRenderJob : public CJobBase
+{
+public:
+	CRenderJob() : TriCount(0){}
+	virtual void DoTask()
+	{
+		for(int i=0; i<TriCount; i++)
+			ts[i].Draw();
+	}
+	STriangleSection ts[MAX_TRIES_PER_JOB];
+	int TriCount;
+};
+
+CVector<CRenderJob> Jobs1;
+CVector<CRenderJob> Jobs2;
+CVector<CRenderJob> Jobs3;
+CVector<CRenderJob> Jobs4;
+CVector<CRenderJob> RemainingJobs;
+
+//static CRenderJob Jobs[MAXJOBS];
+bool InitJobs()
+{
+	Jobs1.push_back(CRenderJob());
+	Jobs2.push_back(CRenderJob());
+	Jobs3.push_back(CRenderJob());
+	Jobs4.push_back(CRenderJob());
+	RemainingJobs.push_back(CRenderJob());
+	return true;
+}
+
+inline void AddRenderJobTo(const STriangleSection& ts, CVector<CRenderJob>& Vector)
+{
+	CRenderJob& Job = *Vector.rbegin();
+	Job.ts[Job.TriCount] = ts;
+	Job.TriCount++;
+	if(Job.TriCount>=MAX_TRIES_PER_JOB)
+		Vector.push_back(CRenderJob());
+}
+inline void AddRenderJob(const STriangleSection& ts)
+{
+	const UInt ThreeQuaterthHeight = (UInt)((float)SCRHEIGHT * (float)0.25f);
+	const UInt HalfHeight = (UInt)((float)SCRHEIGHT * (float)0.5f);
+	const UInt QuaterHeight = (UInt)((float)SCRHEIGHT * (float)0.75f);
+
+	if(ts.EndY < (int)ThreeQuaterthHeight-1)
+		AddRenderJobTo(ts, Jobs1);
+	else if((ts.StartY > (int)QuaterHeight+1) && (ts.EndY < (int)HalfHeight-1))
+		AddRenderJobTo(ts, Jobs2);
+	else if((ts.StartY > (int)HalfHeight+1) && (ts.EndY < (int)ThreeQuaterthHeight-1))
+		AddRenderJobTo(ts, Jobs3);
+	else if(ts.StartY > (int)ThreeQuaterthHeight+1)
+		AddRenderJobTo(ts, Jobs4);
+	else
+		AddRenderJobTo(ts, RemainingJobs);
+}
+
+void CRasterizer::SwapBuffers()
+{
+	//static CJobManager& JobMgr = CJobManager::GetInstance();
+	//for(UInt i=0; i<Jobs4.size(); i++)
+	//	JobMgr.AddNewJob(&Jobs4[i]);
+	//for(UInt i=0; i<Jobs3.size(); i++)
+	//	JobMgr.AddNewJob(&Jobs3[i]);
+	//for(UInt i=0; i<Jobs2.size(); i++)
+	//	JobMgr.AddNewJob(&Jobs2[i]);
+	//for(UInt i=0; i<Jobs1.size(); i++)
+	//	JobMgr.AddNewJob(&Jobs1[i]);
+	//JobMgr.WaitUntilAllDone();
+	//for(UInt i=0; i<RemainingJobs.size(); i++)
+	//	JobMgr.AddNewJob(&RemainingJobs[i]);
+
+	//Jobs4.clear();
+	//Jobs3.clear();
+	//Jobs2.clear();
+	//Jobs1.clear();
+	//JobMgr.WaitUntilAllDone();
+	//RemainingJobs.clear();
+
+	//InitJobs();
+}
+
+void DrawTri2D(CRasterizerScreen& Screen, STriLineToScreenInfo& Tri, int RemainingVertDirection)
+{
+	STriangleSection ts;
+
+	ts.Buffer = Screen.mPixelBuffer;
+	ts.DepthBuffer = Screen.GetDepthBuffer();
+	ts.LeadingEdgeStart = Tri.LeadingEdgeStart;
+	ts.TopY = ts.LeadingEdgeStart.YStart;
+	ts.EndY = ts.TopY+ts.LeadingEdgeStart.Height;
+	ts.Pitch = Screen.mPitch;
+	ts.RemainingVertDirection = RemainingVertDirection;
+	ts.StartY = ts.TopY;
+	ts.TailingLineEdgeStart1 = Tri.TailingLineEdgeStart1;
+	ts.TailingLineEdgeStart2 = Tri.TailingLineEdgeStart2;
+	ts.TextureSize = sTextureList[sBindedTexture].TextSize;
+	ts.TextSizeXMin1 = ts.TextureSize.X-1;
+	ts.TextSizeYMin1 = ts.TextureSize.Y-1;
+	ts.TextureBuffer = (unsigned char*)sTextureList[sBindedTexture].TextBuffer;
+	ts.TextureSizeXf = (float)ts.TextureSize.X;
+	ts.TextureSizeYf = (float)ts.TextureSize.Y;
+	ts.EndX = (int)Tri.LeadingEdgeStart.EndPoint.X;
+
+	//AddRenderJob(ts);
+	ts.Draw();
+
+}
+
+void DrawTri2D(CRasterizerScreen& Screen, STriangleInfo& Triangle2D)
+{
+//void DrawTri2D(CRasterizerScreen& Screen, STriangleInfo& Triangle2D, CRast_Mesh& OriginMesh)
+//{
+	STriLineToScreenInfo Tri;
+	// convert them to other format
+	Tri.LeadingEdgeStart = GetPrepairedStartingEdge(Triangle2D.LeadingLine, Triangle2D);
+	Tri.TailingLineEdgeStart1 = GetPrepairedStartingEdge(Triangle2D.TailingLines[0], Triangle2D);
+	Tri.TailingLineEdgeStart2 = GetPrepairedStartingEdge(Triangle2D.TailingLines[1], Triangle2D);
+	S2Vect2f Leading; Leading.StartPoint = Triangle2D.LeadingLine.StartPoint; Leading.EndPoint = Triangle2D.LeadingLine.EndPoint;
+	S2Vect2f Tailing1; Tailing1.StartPoint = Triangle2D.TailingLines[0].StartPoint; Tailing1.EndPoint = Triangle2D.TailingLines[0].EndPoint;
+	S2Vect2f Tailing2; Tailing2.StartPoint = Triangle2D.TailingLines[1].StartPoint; Tailing2.EndPoint = Triangle2D.TailingLines[1].EndPoint;
+
+	// get the vertex in between the highest and lowest point of the tri
+	const CVec2f& RemainingVert = Tailing1.EndPoint;
+	float tt = Sign(Leading.EndPoint, RemainingVert, Leading.StartPoint);
+	int RemainingVertDirection = Sign(Leading.EndPoint, RemainingVert, Leading.StartPoint) < 0.0f ? -1 : 1; ///<1 = right, -1 = left>
+
+	assert((Leading.StartPoint.X > -10000 && Leading.StartPoint.X < 10000));
+	//{
+	//	assert(false);
+	//	// convert them to other format
+	//	Tri.LeadingEdgeStart = GetPrepairedStartingEdge(Triangle2D.LeadingLine, Triangle2D);
+	//	Tri.TailingLineEdgeStart1 = GetPrepairedStartingEdge(Triangle2D.TailingLines[0], Triangle2D);
+	//	Tri.TailingLineEdgeStart2 = GetPrepairedStartingEdge(Triangle2D.TailingLines[1], Triangle2D);
+	//	Leading.StartPoint = Triangle2D.LeadingLine.StartPoint; Leading.EndPoint = Triangle2D.LeadingLine.EndPoint;
+	//	Tailing1.StartPoint = Triangle2D.TailingLines[0].StartPoint; Tailing1.EndPoint = Triangle2D.TailingLines[0].EndPoint;
+	//	Tailing2.StartPoint = Triangle2D.TailingLines[1].StartPoint; Tailing2.EndPoint = Triangle2D.TailingLines[1].EndPoint;
+	//}
+	// get the vertex in between the highest and lowest point of the tri
+	//const CVec2f& RemainingVert = Tailing1.EndPoint;
+	//int RemainingVertDirection = Sign(Leading.EndPoint, RemainingVert, Leading.StartPoint) < 0.0f ? -1 : 1; ///<1 = right, -1 = left>
+
+	// draw
+	DrawTri2D(Screen, Tri, RemainingVertDirection);
+}
+
+inline bool GetIntersectionPoint(const CVec3f& RayOrigin, const CVec3f& RayDirection, float MaxLength, CVec3f& IntersectionPointOut, const CPlane& Plane)
+{
+	const CVec3f& N = Plane.Normal, V = RayDirection, O = RayOrigin;
+	float Div = dot(N, V);
+	if(Div == 0.0f) return false;
+	float t = (dot(N, O) - (dot(N, Plane.Pos))) / -Div;
+	if(t <= 0.0f) return false;
+	IntersectionPointOut = O + V*t;
+	return (RayOrigin.GetDistance(IntersectionPointOut) < MaxLength);
+}
+
+inline bool IsAbovePlane(const CPlane& Plane, const CVec3f& Point)
+{
+	float dx = Point.X - Plane.Pos.X, dy = Point.Y - Plane.Pos.Y, dz = Point.Z - Plane.Pos.Z;
+	float Squared = (dx*dx)+(dy*dy)+(dz*dz);
+
+	if(Squared == 0.0f)
+		return false;
+
+	float Length = sqrt(Squared);
+
+	float nx = dx/Length, ny = dy/Length, nz = dz/Length;
+	float rx = Plane.Normal.X - nx, ry = Plane.Normal.Y - ny, rz = Plane.Normal.Z - nz;
+	float rs = (rx*rx)+(ry*ry)+(rz*rz);
+
+	return (rs < 2.0f);
+}
+
+SVert CreateVertexFromPoint(const SVert& Vert1, const SVert& Vert2, float VertDist, float PointDist, const CVec3f& Point)
+{
+	SVert RetVal;
+	RetVal.p.AsVert() = Point;
+	float Percent = PointDist / VertDist;
+	RetVal.uv.X = Vert1.uv.X + ((Vert2.uv.X - Vert1.uv.X) * Percent);
+	RetVal.uv.Y = Vert1.uv.Y + ((Vert2.uv.Y - Vert1.uv.Y) * Percent);
+	return RetVal;
+}
+
+inline int Clip(const STriMesh& TriangleIn, const CPlane ClippingPlane, STriMesh* TrisOut)
+{
+	const CVec3f& p1 = TriangleIn.v1.p.AsVert(),		&p2 = TriangleIn.v2.p.AsVert(),	&p3 = TriangleIn.v3.p.AsVert();
+	union{struct { bool a1, a2, a3;};bool a[3];};
+
+	// check if they are all above plane
+	float Sum = 100.0f;
+
+
+	for(UInt i=0; i<3; i++)
+	{
+		const CVec3f& p = TriangleIn.v[i].p.AsVert();
+
+		float dx = p.X, dy = p.Y, dz = p.Z - ClippingPlane.Pos.Z; // only z pos has changed
+		float Squared = (dx*dx)+(dy*dy)+(dz*dz);
+		Sum *= Squared;
+
+		float Length = sqrt(Squared);
+		float Lengthi = 1.0f/Length;
+
+		float nx = dx*Lengthi, ny = dy*Lengthi, nz = dz*Lengthi;
+		float rx = ClippingPlane.Normal.X - nx, ry = ClippingPlane.Normal.Y - ny, rz = ClippingPlane.Normal.Z - nz;
+		float rs = (rx*rx)+(ry*ry)+(rz*rz);
+
+		a[i] = (rs < 2.0f);
+	}
+
+	int aTotal = (a1 + a2 + a3);
+
+	if(aTotal == 3)
+		return 0;
+	if(*((float*)&aTotal) * Sum == 0.0f)
+		return -1;
+
+	CVec3f n1 = p1.GetDirectionTo(p2), n2 = p2.GetDirectionTo(p3), n3 = p3.GetDirectionTo(p1);
+	float l1 = p1.GetDistance(p2), l2 = p2.GetDistance(p3), l3 = p3.GetDistance(p1);
+
+	CVec3f ip1, ip2, ip3;
+	bool i1 = GetIntersectionPoint(p1, n1, l1, ip1, ClippingPlane), i2 = GetIntersectionPoint(p2, n2, l2, ip2, ClippingPlane), i3 = GetIntersectionPoint(p3, n3, l3, ip3, ClippingPlane);
+
+	if(i1 + i2 + i3 == 0)
+		return 0;
+
+
+	// get intersetion points
+	const SVert& v1 = TriangleIn.v1;
+	const SVert& v2 = TriangleIn.v2;
+	const SVert& v3 = TriangleIn.v3;
+
+	SVert iv1 = CreateVertexFromPoint(v1, v2, l1, p1.GetDistance(ip1), ip1);
+	SVert iv2 = CreateVertexFromPoint(v2, v3, l2, p2.GetDistance(ip2), ip2);
+	SVert iv3 = CreateVertexFromPoint(v3, v1, l3, p3.GetDistance(ip3), ip3);
+	SVert Vis[6];
+	// create vertex array
+	int vi = 0;
+	Vis[vi] = v1; vi+=a1; Vis[vi] = iv1; vi+=i1;
+	Vis[vi] = v2; vi+=a2; Vis[vi] = iv2; vi+=i2;
+	Vis[vi] = v3; vi+=a3; Vis[vi] = iv3; vi+=i3;
+
+	// create first triangle
+	TrisOut[0].v1 = Vis[0];
+	TrisOut[0].v2 = Vis[1];
+	TrisOut[0].v3 = Vis[2];
+
+	TrisOut[1].v1 = Vis[2];
+	TrisOut[1].v2 = Vis[3];
+	TrisOut[1].v3 = Vis[0];
+
+	return vi - 2; // return amount of triangle created
+
+}
+
+void DrawTriangle(CRasterizerScreen& Screen, STriMesh& Triangle)
+{
+	// Get the usefull triangle info
+	STriangleInfo TriInfo;
+
+	//TriInfo.MeshVerts
+	TriInfo.TriMesh = Triangle;
+
+	// convert them to 2d lines
+	UInt PointIndicesTopToBottom[3];
+
+
+	if(!Convert3DVertexesTo2DLines(TriInfo.TriMesh.v[0], TriInfo.TriMesh.v[1], TriInfo.TriMesh.v[2], TriInfo.LeadingLine, TriInfo.TailingLines[0], TriInfo.TailingLines[1], PointIndicesTopToBottom))
+		return;
+
+	DrawTri2D(Screen, TriInfo);
+}
+
+void DrawTri(CRasterizerScreen& Screen, const CVec3f& v1, const CVec3f& v2, const CVec3f& v3, const CVec2f& UV1, const CVec2f& UV2, const CVec2f& UV3)
+{
+	// create tri mesh to draw
+
+	STriMesh Tri;
+	Tri.v1.p.AsVert() = v1;
+	Tri.v2.p.AsVert() = v2;
+	Tri.v3.p.AsVert() = v3;
+	Tri.v1.uv.AsVert() = UV1;
+	Tri.v2.uv.AsVert() = UV2;
+	Tri.v3.uv.AsVert() = UV3;
+
+	UInt NextTriIndex = 0;
+	STriMesh Tris[(CLIPPINGPLANESCOUNT*3)];
+
+	Tris[NextTriIndex] = Tri;
+	NextTriIndex++;
+
+
+	for(UInt i=0; i<CLIPPINGPLANESCOUNT; i++)
+	{
+		const CPlane ClippingPlane = sScreenInfo.sClippingPlanes[i];
+
+		UInt NextNewIndex = 0;
+		STriMesh NewTris[(CLIPPINGPLANESCOUNT*3)];
+
+		for(UInt TriIndex = 0; TriIndex < NextTriIndex; TriIndex++)
+		{
+			const STriMesh& Current = Tris[TriIndex];
+
+			STriMesh Out[2];
+			int TrisCreated = Clip(Current, ClippingPlane, Out);
+			if(TrisCreated == 0)
+			{
+				NewTris[NextNewIndex] = Current;
+				NextNewIndex++;
+			}
+			else if(TrisCreated == 1)
+			{
+				NewTris[NextNewIndex] = Out[0];
+				NextNewIndex++;
+			}
+			else if(TrisCreated == 2)
+			{
+				NewTris[NextNewIndex] = Out[0];
+				NewTris[NextNewIndex+1] = Out[1];
+				NextNewIndex+=2;
+			}
+		}
+
+		memcpy(Tris, NewTris, sizeof(STriMesh) * NextNewIndex);
+		NextTriIndex = NextNewIndex;
+		//Tris.clear();
+		//Tris = NewTris;
+	}
+
+	for(UInt i=0; i<NextTriIndex; i++)
+	{
+		DrawTriangle(Screen, Tris[i]);
+	}
+
+}
+
+void CRasterizer::DrawMesh(CRasterizerScreen& Screen, CRast_Mesh& Mesh, const CMatrixTrans& Matrix)
+{
+	CVec3f NodePos = Matrix.GetPos();
+
+	// vec base
+	CMatrixTrans LocalBase;
+	LocalBase.GetOrientation().Mul(Matrix.GetOrientation());
+
+	// for camera transformation
+	const CMatrixRot& RotCam = mCameraMatrix.GetOrientation();
+
+	for(UInt PolyIndex = 0; PolyIndex < Mesh.mPolys.size(); PolyIndex++)
+	{
+		CRast_Vertex CameraV[] = {Mesh.mVertexes[Mesh.mPolys[PolyIndex].VertexIndices[0]], Mesh.mVertexes[Mesh.mPolys[PolyIndex].VertexIndices[1]], Mesh.mVertexes[Mesh.mPolys[PolyIndex].VertexIndices[2]]};
+
+		// transform them to the node translation
+		for(UInt i=0; i<3; i++)
+		{
+			CVec3f& Vert = *(CVec3f*)(&CameraV[i]);
+			Vert = LocalBase.GetTranslatedLocally(Vert).GetPos() + NodePos;
+			Vert = TranslateToCamera(Vert, mCameraMatrix);
+		}
+
+		// draw
+		//CRasterizer::sBindTexture(Mesh.mMaterial);
+		CRasterizer::sBegin();
+		CRasterizer::sTexCoord2f(CameraV[0].U1, CameraV[0].V1);
+		CRasterizer::sVertex3f(CameraV[0].X, CameraV[0].Y, CameraV[0].Z);
+		CRasterizer::sTexCoord2f(CameraV[1].U1, CameraV[1].V1);
+		CRasterizer::sVertex3f(CameraV[1].X, CameraV[1].Y, CameraV[1].Z);
+		CRasterizer::sTexCoord2f(CameraV[2].U1, CameraV[2].V1);
+		CRasterizer::sVertex3f(CameraV[2].X, CameraV[2].Y, CameraV[2].Z);
+		CRasterizer::sEnd();
+		//CRasterizer::sBindTexture(0);
+		//DrawTri(Screen, CameraV[0], CameraV[1], CameraV[2], Mesh.mMaterial, Matrix.m33);
+	}
+}
+
+void CRasterizer::DrawNode(CRasterizerScreen& Screen, CRast_Node& Node, CVector<CMatrixTrans>& MatrixStack)
+{
+	CMatrixTrans CurrentOrientation;// = MatrixStack.back();
+	CurrentOrientation = MatrixStack.back();
+	CurrentOrientation.TranslateLocally(Node.Matrix.GetPos());
+	CurrentOrientation.GetOrientation().Mul(Node.Matrix.GetOrientation());
+
+	MatrixStack.push_back(CurrentOrientation);
+
+	bool ShouldDraw = true;
+	if(Node.Name.GetLength() != 0)
+		ShouldDraw = (Node.Name[0] != '~');
+	if(ShouldDraw)
+	{
+		for(UInt MeshIndex = 0; MeshIndex<Node.Meshes.size(); MeshIndex++)
+			DrawMesh(Screen, *Node.Meshes[MeshIndex], CurrentOrientation);
+	}
+	for(UInt i=0; i<Node.GetChildNodes().size(); i++)
+		DrawNode(Screen, *(CRast_Node*)Node.GetChildNodes()[i], MatrixStack);
+	MatrixStack.pop_back();
+}
+void CRasterizer::DrawLayer(CRasterizerScreen& Screen, CRast_Layer& Layer)
+{
+	CVector<CMatrixTrans> MatrixStack;
+	MatrixStack.push_back(mMatrix);
+	MatrixStack.back().m33 = 1.0f;
+	DrawNode(Screen, *Layer.mRootNode, MatrixStack);
+}
+
+void CRasterizer::UpdateClippingPlanes(CRast_Scene& Scene)
+{
+
+	CMatrixTrans CameraMatrix = Scene.FindNodes_Recursive("~Camera")[0]->GetGlobalMatrix();
+
+	CVector<CRast_Node*> Nodes = Scene.FindNodes_Recursive("~Clipping");
+	mClippingPlanes.clear();
+
+	// strip down to the mesh node
+	for(UInt i=0; i<Nodes.size(); i++)
+		while(Nodes[i]->Meshes.size() == 0)
+			Nodes[i] = Nodes[i]->GetChildNodes()[0];
+
+	for(UInt i=0; i<Nodes.size(); i++)
+	{
+		// get clipping tri
+		CRast_Node* Current = Nodes[i];
+		CTri3 Tri;
+		assert2(Current->Meshes.size() == 1, "Must contain only 1 mesh");
+		const CRast_Mesh* Mesh = Current->Meshes[0];
+		assert2(Mesh->mPolys.size() == 1, "Must contain only 1 polygon");
+		assert2(Mesh->mPolys[0].VertexIndices.size() == 3, "Must contain a tri");
+		const CVector<UInt>& VertIndices = Mesh->mPolys[0].VertexIndices;
+
+		CMatrixTrans LocalMat = Current->Matrix;
+		Current->Matrix.GetPos() = -Current->Matrix.GetPos();
+		CMatrixTrans GlobalMatrixInitial = Current->GetGlobalMatrix();
+		Current->Matrix = LocalMat;
+
+		for(int n=0; n<3; n++)
+		{
+			Tri.v[n] = PositionFromMatrix(GlobalMatrixInitial, CVec3f(Mesh->mVertexes[VertIndices[n]].X, Mesh->mVertexes[VertIndices[n]].Y, Mesh->mVertexes[VertIndices[n]].Z));
+			Tri.v[n] = TranslateToCamera(Tri.v[n], mCameraMatrix);
+		}
+
+		// Transform to clipping plane
+		CPlane& Plane = mClippingPlanes.PushBackGet(CPlane());
+		Plane.Normal = cross(Tri.v[1] - Tri.v[0], Tri.v[2] - Tri.v[0]).GetNormalized();
+		Plane.Pos = Tri.v[0];
+	}
+}
+
+void CRasterizer::Draw(CRasterizerScreen& Screen, CRast_Scene& Scene, const CMatrixTrans& ViewOffset)
+{
+	mCameraMatrix = ViewOffset;
+	//printf("%f, %f, %f| %f, %f, %f\r", mCameraMatrix.GetPos().X, mCameraMatrix.GetPos().Y, mCameraMatrix.GetPos().Z, mCameraMatrix.GetOrientation().GetForward().X, mCameraMatrix.GetOrientation().GetForward().Y, mCameraMatrix.GetOrientation().GetForward().Z);
+	mMatrix.SetIdentity();
+	//UpdateClippingPlanes(Scene);
+	Screen.ClearZBuffer();
+	for(UInt ObjectIndex = 0; ObjectIndex < Scene.mLayers.size(); ObjectIndex++)
+		DrawLayer(Screen, Scene.mLayers[ObjectIndex]);
+}
+
+void CRasterizer::SetFOV(float FOV)
+{
+	mMatrix.m33 = FOV / 200;
+}

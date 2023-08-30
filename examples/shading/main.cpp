@@ -110,7 +110,7 @@ namespace example
 				//uint8_t uu = (uint8_t)std::clamp(it.u * 255.0f, 0.0f, 255.0f);
 
 				float ZZ = (1.0f/one_over_z);
-				printf("%f\n", it.u);
+				//printf("%f\n", it.u);
 
 				for(size_t i=0; i<ctx.line_length_px; i++)
 				{
