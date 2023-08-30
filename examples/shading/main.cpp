@@ -1,15 +1,12 @@
 #include <iostream>
 #include <vector>
-#include <GLFW/glfw3.h>
 #include <cmath>
 #include <cstring>
-#include <execution>
-
 #include <disgraphics.hpp>
-#include "window.hpp"
-#include "camera.hpp"
+#include "utils_window.hpp"
+#include "utils_camera.hpp"
 
-namespace sim
+namespace example
 {
 	constexpr size_t screen_width = 800;
 	constexpr size_t screen_height = 800;
@@ -79,11 +76,12 @@ namespace sim
 
 	bool app()
 	{
-		if(!window::create(screen_width, screen_height, "local positioning sim", scale))
+		auto window = utils::create_window(screen_width, screen_height, "local positioning sim", scale);
+		if(window == nullptr)
 		{
 			return false;
 		}
-		camera cam;
+		utils::camera cam(window.get());
 
 		constexpr size_t texture_width = 2;
 		constexpr size_t texture_height = 2;
@@ -138,13 +136,13 @@ namespace sim
 		});
 
 		// update loop
-		while(!window::is_close_requested())
+		while(!window->is_close_requested())
 		{
 			cam.update();
-			std::fill(std::execution::unseq, draw.pixels.begin(), draw.pixels.end(), 0xff777777);
+			std::fill(draw.pixels.begin(), draw.pixels.end(), 0xff777777);
 
 			dis::render<draw_ctx>(triangles, cam.to_grh(), draw, screen_width / scale, screen_height / scale);
-			window::draw(draw.pixels);
+			window->draw(draw.pixels);
 		}
 
 		// exit with ok
@@ -154,6 +152,6 @@ namespace sim
 
 int main()
 {
-	return sim::app() ? 0 : 1;
+	return example::app() ? 0 : 1;
 }
 

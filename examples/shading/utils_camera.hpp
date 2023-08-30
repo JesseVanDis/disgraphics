@@ -3,18 +3,22 @@
 #define SIMULATOR_CAMERA_HPP
 
 #include <disgraphics.hpp>
+#include "utils_window.hpp"
 
-namespace sim
+namespace example::utils
 {
 	class camera
 	{
 		public:
+			explicit camera(utils::input* input);
 			void 		update();
 			dish::cam 	to_grh();
 
 		private:
 			void 		update_movement();
 			void 		update_orientation();
+
+			utils::input* m_input = nullptr;
 
 			float 		m_pitch = 0;
 			float 		m_yaw = M_PI / 2.0f;

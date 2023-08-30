@@ -1,11 +1,15 @@
-#include "window.hpp"
-#include "camera.hpp"
+#include "utils_camera.hpp"
 
-
-namespace sim
+namespace example::utils
 {
 
 	static float s_mouse_sensitivity = 0.01f; // change this value to your liking
+
+	camera::camera(utils::input* input)
+		: m_input(input)
+	{
+	}
+
 
 	void camera::update()
 	{
@@ -38,19 +42,19 @@ namespace sim
 			cam_tan.z /= l;
 		}
 
-		if(window::is_key_pressed_w())
+		if(m_input->is_key_pressed_w())
 		{
 			m_pos = {m_pos.x + cam_dir.x * speed,  m_pos.y + cam_dir.y * speed,  m_pos.z + cam_dir.z * speed};
 		}
-		if(window::is_key_pressed_s())
+		if(m_input->is_key_pressed_s())
 		{
 			m_pos = {m_pos.x - cam_dir.x * speed,  m_pos.y - cam_dir.y * speed,  m_pos.z - cam_dir.z * speed};
 		}
-		if(window::is_key_pressed_d())
+		if(m_input->is_key_pressed_d())
 		{
 			m_pos = {m_pos.x - cam_tan.x * speed,  m_pos.y - cam_tan.y * speed,  m_pos.z - cam_tan.z * speed};
 		}
-		if(window::is_key_pressed_a())
+		if(m_input->is_key_pressed_a())
 		{
 			m_pos = {m_pos.x + cam_tan.x * speed,  m_pos.y + cam_tan.y * speed,  m_pos.z + cam_tan.z * speed};
 		}
@@ -58,8 +62,8 @@ namespace sim
 
 	void camera::update_orientation()
 	{
-		const bool is_mouse_pressed = window::is_mouse_pressed();
-		const auto [mouse_x, mouse_y] = window::get_mouse_pos();
+		const bool is_mouse_pressed = m_input->is_mouse_pressed();
+		const auto [mouse_x, mouse_y] = m_input->get_mouse_pos();
 
 		if(m_mouse_last_x == -1 && m_mouse_last_y == -1)
 		{
@@ -86,7 +90,7 @@ namespace sim
 		{
 			m_mouse_button_state = 1;
 		}
-		else if(!window::is_mouse_pressed())
+		else if(!m_input->is_mouse_pressed())
 		{
 			m_mouse_button_state = 0;
 		}
