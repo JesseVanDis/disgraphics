@@ -147,10 +147,11 @@ namespace dis::helpers
 		template<unsigned int index, typename cb_t>
 		inline void for_each_field(auto& a, auto& b, cb_t cb)
 		{
-			if constexpr(requires{decltype(a)::get_field<index>(a);})
+			using a_t = std::decay_t<decltype(a)>;
+			if constexpr(requires{a_t::template get_field<index>(a);})
 			{
-				cb(decltype(a)::get_field<index>(a), decltype(a)::get_field<index>(b));
-				for_each_fields_ext<index+1, cb_t>(a, b, cb);
+				cb(a_t::template get_field<index>(a), a_t::template get_field<index>(b));
+				for_each_field<index+1, cb_t>(a, b, cb);
 			}
 		}
 	}

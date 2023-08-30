@@ -48,7 +48,7 @@ namespace example
 			float u, v;
 
 			template<unsigned int index>
-			static auto& get_field(auto& self)
+			static auto& get_field(auto& self) requires (index < 2)
 			{
 				if constexpr(index == 0) { return self.u; }
 				if constexpr(index == 1) { return self.v; }
@@ -121,7 +121,10 @@ namespace example
 
 					//uint8_t color = u;//std::clamp(Z, 0.0f, 255.0f);
 
-					px[i] = (u << 24) + (u << 16) + (v << 8) + (v << 0);
+					//px[i] = (u << 24) + (u << 16) + (v << 8) + (v << 0);
+					// u = red
+					// v = blue
+					px[i] = (0 << 24) + (v << 16) + (0 << 8) + (u << 0);
 
 					one_over_z += ctx.one_over_z_it;
 					//dis::detail::add(it, ctx.it);
@@ -144,7 +147,7 @@ namespace example
 		triangles.push_back(tri{
 				.p0  = {0,0,5,  0,0},
 				.p1  = {2,0,5,  1,0},
-				.p2  = {0,2,5,  1,1},
+				.p2  = {2,2,5,  1,1},
 		});
 
 		// update loop
