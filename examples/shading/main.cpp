@@ -18,7 +18,7 @@ namespace example
 	struct vertex
 	{
 		float x, y, z;
-		double u, v;
+		float u, v;
 
 		constexpr vertex operator + (float other) const { return {x + other, y + other, z + other, u + other, v + other}; }
 	};
@@ -46,7 +46,7 @@ namespace example
 
 		struct vertex_it
 		{
-			double u, v;
+			float u, v;
 
 			template<unsigned int index>
 			static auto& get_field(auto& self) requires (index < 2)
@@ -136,7 +136,7 @@ namespace example
 					one_over_z += ctx.one_over_z_it;
 					//dis::detail::add(it, ctx.it);
 					it = ctx.it;
-					it *= (double)i;
+					it *= (float)i;
 					it += ctx.begin;
 				}
 
