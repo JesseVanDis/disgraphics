@@ -2,6 +2,7 @@
 #include <vector>
 #include <cmath>
 #include <cstring>
+#include <concepts>
 #include <disgraphics.hpp>
 #include "utils_window.hpp"
 #include "utils_camera.hpp"
@@ -11,13 +12,13 @@ namespace example
 	constexpr size_t screen_width = 800;
 	constexpr size_t screen_height = 800;
 
-	constexpr size_t scale = 4;
+	constexpr size_t scale = 1;
 
 
 	struct vertex
 	{
 		float x, y, z;
-		float u, v;
+		double u, v;
 
 		constexpr vertex operator + (float other) const { return {x + other, y + other, z + other, u + other, v + other}; }
 	};
@@ -45,7 +46,7 @@ namespace example
 
 		struct vertex_it
 		{
-			float u, v;
+			double u, v;
 
 			template<unsigned int index>
 			static auto& get_field(auto& self) requires (index < 2)
@@ -67,7 +68,7 @@ namespace example
 				return *this;
 			}
 
-			vertex_it& operator *= (dis::floating_point auto other)
+			vertex_it& operator *= (dis::arithmetic auto other)
 			{
 				dish::for_each_field(*this, other, [](auto& a, const auto& b){ a *= b;});
 				return *this;
@@ -122,8 +123,8 @@ namespace example
 				{
 					float Z = (1.0f/one_over_z);
 
-					uint8_t u = (uint8_t)std::clamp(it.u * 255.0f, 0.0f, 255.0f);
-					uint8_t v = (uint8_t)std::clamp(it.v * 255.0f, 0.0f, 255.0f);
+					uint8_t u = (uint8_t)std::clamp(it.u * 255.0, 0.0, 255.0);
+					uint8_t v = (uint8_t)std::clamp(it.v * 255.0, 0.0, 255.0);
 
 					//uint8_t color = u;//std::clamp(Z, 0.0f, 255.0f);
 
@@ -134,7 +135,9 @@ namespace example
 
 					one_over_z += ctx.one_over_z_it;
 					//dis::detail::add(it, ctx.it);
-					it += ctx.it;
+					it = ctx.it;
+					it *= (double)i;
+					it += ctx.begin;
 				}
 
 				//auto begin = std::next(pixels.begin(), ctx.px_x_from + ctx.px_y * buffer_width);
@@ -156,10 +159,14 @@ namespace example
 				.p2  = {2,2,5,  1,1},
 		});
 
+		cam.set_position(dish::vec3<float>{0.128768, 0.391487, 4.58175});
+		cam.set_rot(-0.899999, 0.790792);
+
 		// update loop
 		while(!window->is_close_requested())
 		{
 			cam.update();
+			//cam.print_position();
 			std::fill(draw.pixels.begin(), draw.pixels.end(), 0xff777777);
 
 			dis::render<draw_ctx>(triangles, cam.to_grh(), draw, screen_width / scale, screen_height / scale);

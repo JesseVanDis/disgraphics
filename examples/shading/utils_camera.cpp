@@ -1,3 +1,4 @@
+#include <iostream>
 #include "utils_camera.hpp"
 
 namespace example::utils
@@ -17,9 +18,9 @@ namespace example::utils
 		update_movement();
 	}
 
-	dish::cam camera::to_grh()
+	dish::cam camera::to_grh() const
 	{
-		const dish::vec3 front = {std::cos(m_yaw) * std::cos(m_pitch), std::sin(m_pitch), std::sin(m_yaw) * std::cos(m_pitch)};
+		const dish::vec3<float> front = {std::cos(m_yaw) * std::cos(m_pitch), std::sin(m_pitch), std::sin(m_yaw) * std::cos(m_pitch)};
 
 		return dish::cam {
 				.pos = m_pos,
@@ -29,11 +30,27 @@ namespace example::utils
 		};
 	}
 
+	void camera::set_position(const dish::vec3<float>& pos)
+	{
+		m_pos = pos;
+	}
+
+	void camera::set_rot(float pitch_radians, float yaw_radians)
+	{
+		m_pitch = pitch_radians;
+		m_yaw = yaw_radians;
+	}
+
+	void camera::print_position() const
+	{
+		std::cout << "cam pos: " << m_pos.x << ", " << m_pos.y << ", " << m_pos.z << ", cam pitch: " << m_pitch << ", yaw: " << m_yaw << "\n";
+	}
+
 	void camera::update_movement()
 	{
 		constexpr float speed = 0.05f;
-		const dish::vec3 cam_dir = {std::cos(m_yaw) * std::cos(m_pitch), std::sin(m_pitch), std::sin(m_yaw) * std::cos(m_pitch)};
-		dish::vec3 cam_tan = {-cam_dir.z, 0, cam_dir.x};
+		const dish::vec3<float> cam_dir = {std::cos(m_yaw) * std::cos(m_pitch), std::sin(m_pitch), std::sin(m_yaw) * std::cos(m_pitch)};
+		dish::vec3<float> cam_tan = {-cam_dir.z, 0, cam_dir.x};
 		if(cam_tan.x != 0.0f && cam_tan.z != 0.0f)
 		{
 			const float l = std::sqrt(cam_tan.x*cam_tan.x + cam_tan.z*cam_tan.z);

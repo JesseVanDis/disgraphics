@@ -18,6 +18,9 @@ namespace dis
 	concept unsigned_int_32 = std::same_as<uint32_t, std::decay_t<T>>;
 
 	template<typename T>
+	concept arithmetic = std::is_arithmetic_v<std::decay_t<T>>;
+
+	template<typename T>
 	concept vector2 = requires(T v)
 	{
 		{v.x} -> floating_point;
@@ -30,6 +33,15 @@ namespace dis
 		{v.x} -> floating_point;
 		{v.y} -> floating_point;
 		{v.z} -> floating_point;
+	};
+
+	template<typename T>
+	concept vector4 = requires(T v)
+	{
+		{v.x} -> floating_point;
+		{v.y} -> floating_point;
+		{v.z} -> floating_point;
+		{v.w} -> floating_point;
 	};
 
 	template<typename T>
@@ -110,32 +122,37 @@ namespace dis
 
 namespace dis::helpers
 {
+	template<typename T>
 	struct vec2
 	{
-		float x,y;
+		T x,y;
 	};
-	static_assert(vector2<vec2>);
+	static_assert(vector2<vec2<float>>);
 
+	template<typename T>
 	struct vec3
 	{
-		float x,y,z;
+		T x,y,z;
 	};
-	static_assert(vector3<vec3>);
+	static_assert(vector3<vec3<float>>);
 
+	template<typename T>
 	struct vec4
 	{
-		float x,y,z,w;
+		T x,y,z,w;
 	};
+	static_assert(vector4<vec4<float>>);
 
+	template<typename T>
 	struct tri
 	{
-		vec3 p0, p1, p2;
+		vec3<T> p0, p1, p2;
 	};
-	static_assert(triangle<tri>);
+	static_assert(triangle<tri<float>>);
 
 	struct cam
 	{
-		vec3 pos, lookat, up;
+		vec3<float> pos, lookat, up;
 		float fov;
 	};
 	static_assert(camera<cam>);
@@ -227,21 +244,6 @@ namespace dis
 {
 	namespace detail
 	{
-		struct impl
-		{
-			std::unique_ptr<float> 	managed_depth_buffer;
-			size_t					managed_depth_buffer_size = 0;
-		};
-	}
-	
-	namespace detail
-	{
-        struct line
-        {
-            const dish::vec3& p0;
-            const dish::vec3& p1;
-        };
-
 		template<typename T>
 		concept line_custom_iterable = requires(T v)
 		{
@@ -260,17 +262,10 @@ namespace dis
 			{v.begin} -> line_custom_iterable;
 		};
 
-		template<vector3 vertex_t>
-		struct screen_space_vertex
-		{
-			dish::vec3 screen_pos;
-			vertex_t  vertex;
-		};
-
 		template<typename user_defined_iterators_t>
 		struct screen_space_clipped_pt
 		{
-			dish::vec3 screen_pos;
+			dish::vec3<double> screen_pos;
 			user_defined_iterators_t user_defined; // xyz or uv ect... ( they need to be clipped as well )
 
 			screen_space_clipped_pt& operator -= (const screen_space_clipped_pt& other)
@@ -280,7 +275,7 @@ namespace dis
 				screen_pos.z -= other.screen_pos.z;
 				auto temp = user_defined;
 				user_defined = other.user_defined;
-				user_defined *= -1.0f;
+				user_defined *= -1;
 				user_defined += temp;
 				return *this;
 			}
@@ -303,7 +298,7 @@ namespace dis
 				return *this;
 			}
 
-			screen_space_clipped_pt& operator *= (float v)
+			screen_space_clipped_pt& operator *= (floating_point auto v)
 			{
 				screen_pos.x *= v;
 				screen_pos.y *= v;
@@ -344,15 +339,14 @@ namespace dis
 		template<typename user_defined_iterators_t>
 		using screen_space_clipped_pt_triangle = std::array<screen_space_clipped_pt<user_defined_iterators_t>, 3>;
 
-		template<triangle triangle_t>
-		using screen_space_triangle = std::array<screen_space_vertex<vertex_from_tri_t<triangle_t>>, 3>;
-
 		struct line_it_base
 		{
+			using flt_t = double;
+
 			int y_start, height;
 
-			float x_it, x;
-			float z_it, z;
+			flt_t x_it, x;
+			flt_t z_it, z;
 
 			void increment_base()
 			{
@@ -362,7 +356,7 @@ namespace dis
 
 			struct set_precalculated
 			{
-				float y_start_ceiled, height_ceiled, one_over_height_ceiled, sub_pixel;
+				flt_t y_start_ceiled, height_ceiled, one_over_height_ceiled, sub_pixel;
 			};
 
 			set_precalculated set_base(const vector3 auto& p0_screen_pos, const vector3 auto& p1_screen_pos)
@@ -370,14 +364,14 @@ namespace dis
 				set_precalculated c {
 					.y_start_ceiled 		= std::ceil(p0_screen_pos.y),
 					.height_ceiled 			= std::ceil(p1_screen_pos.y) - c.y_start_ceiled,
-					.one_over_height_ceiled = c.height_ceiled != 0.0f ? (1.0f / c.height_ceiled) : 0.0f,
+					.one_over_height_ceiled = c.height_ceiled != flt_t(0) ? (flt_t(1) / c.height_ceiled) : flt_t(0),
 					.sub_pixel 				= c.y_start_ceiled - p0_screen_pos.y
 				};
 
 				//assert(height_ceiled != 0.0f); // this is going to be a division over 0 ! // TODO: handle this to avoid NaN
 
-				y_start    = static_cast<int>(c.y_start_ceiled);
-				height     = static_cast<int>(c.height_ceiled);
+				y_start    	= static_cast<int>(c.y_start_ceiled);
+				height     	= static_cast<int>(c.height_ceiled);
 				x_it 		= (p1_screen_pos.x - p0_screen_pos.x) * c.one_over_height_ceiled;
 				x			= p0_screen_pos.x + (x_it * c.sub_pixel);
 				z_it 		= (p1_screen_pos.z - p0_screen_pos.z) * c.one_over_height_ceiled;
@@ -398,10 +392,12 @@ namespace dis
 		template<typename user_defined_iterators_t>
 		struct line_it<user_defined_iterators_t, std::enable_if_t<line_custom_iterable<user_defined_iterators_t>>> : line_it_base
 		{
+			using flt_t = double;
+
 			user_defined_iterators_t user_defined;
 			user_defined_iterators_t user_defined_it;
 
-			float one_over_z;
+			flt_t one_over_z;
 
 			//UV uv_over_z;
 			//UV uv_over_z_it;
@@ -418,10 +414,8 @@ namespace dis
 			{
 				const set_precalculated c = set_base(p0.screen_pos, p1.screen_pos);
 
-				using float_t = decltype(c.one_over_height_ceiled);
-
-				const float one_over_z_end 	= 1.0f / p1.screen_pos.z;
-				one_over_z 					= 1.0f / p0.screen_pos.z;
+				const float one_over_z_end 	= flt_t(1) / p1.screen_pos.z;
+				one_over_z 					= flt_t(1) / p0.screen_pos.z;
 
 				// below is equal to:
 				//   start = p0 * one_over_z
@@ -438,7 +432,7 @@ namespace dis
 				user_defined_it += inv_start;
 				user_defined_it *= c.one_over_height_ceiled;
 
-				inv_start *= (float_t)-1;
+				inv_start *= flt_t(-1);
 				user_defined = user_defined_it;
 				user_defined *= c.sub_pixel;
 				user_defined += inv_start;
@@ -501,6 +495,8 @@ namespace dis
 		template<draw_horizontal_line_ctx draw_ctx_t, typename user_defined_iterators_t, triangle triangle_t>
 		constexpr inline void it_line(const triangle_t& source_triangle, draw_ctx_t& ctx, int y, line_it<user_defined_iterators_t>& left, line_it<user_defined_iterators_t>& right, draw_horizontal_line_function<draw_ctx_t, triangle_t> auto&& draw_hline_function)
 		{
+			using flt_t = double;
+
 			ctx.px_y 			= y;
 			ctx.px_x_from 		= static_cast<int>(left.x);
 			ctx.line_length_px 	= static_cast<int>(right.x) - ctx.px_x_from;
@@ -509,18 +505,18 @@ namespace dis
 
 			if constexpr(has_user_defined_iterators<draw_ctx_t>)
 			{
-				const float width = right.x - left.x;
-				const float one_over_width = 1.0f / width;
-				const float sub_texel = std::floor(left.x) - left.x;
+				const flt_t width = right.x - left.x;
+				const flt_t one_over_width = flt_t(1) / width;
+				const flt_t sub_texel = std::floor(left.x) - left.x;
 
-				const float one_over_z_it = (right.one_over_z - left.one_over_z) * one_over_width;
-				const float one_over_z 	= left.one_over_z + (one_over_z_it * sub_texel);
+				const floating_point auto one_over_z_it = (right.one_over_z - left.one_over_z) * one_over_width;
+				const floating_point auto one_over_z 	= left.one_over_z + (one_over_z_it * sub_texel);
 
-				const float z = (1.0f/one_over_z);
+				const floating_point auto z = flt_t(1)/one_over_z;
 
 				//ctx.it 	= (right.user_defined - left.user_defined) * one_over_width;
 				ctx.it = left.user_defined;
-				ctx.it *= -1.0f;
+				ctx.it *= -1;
 				ctx.it += right.user_defined;
 				ctx.it *= one_over_width;
 
@@ -645,9 +641,13 @@ namespace dis
 			return std::sqrt(vec.x*vec.x + vec.y*vec.y + vec.z*vec.z);
 		}
 
-		constexpr dish::vec3 cross_xyz(const vector3 auto& a, const vector3 auto& b)
+		/// does not check for 0 division
+		constexpr double length_precise(const vector3 auto& vec)
 		{
-			return {a.b * b.z - b.b * a.z, a.z * b.a - b.z * a.a, a.a * b.b - b.a * a.b};
+			double x = vec.x;
+			double y = vec.y;
+			double z = vec.z;
+			return std::sqrt(x*x + y*y + z*z);
 		}
 
 		constexpr floating_point auto dot_xyz(const vector3 auto& a, const vector3 auto& b)
@@ -689,9 +689,10 @@ namespace dis
 			return result;
 		}
 
-		constexpr dish::vec4 mul(const dish::mat4x4& m1, const dish::vec4& m2)
+		template<floating_point flt_t>
+		constexpr dish::vec4<flt_t> mul(const dish::mat4x4& m1, const dish::vec4<flt_t>& m2)
 		{
-			dish::vec4 result = {};
+			dish::vec4<flt_t> result = {};
 			result.x = m1[0][0] * m2.x + m1[1][0] * m2.y + m1[2][0] * m2.z + m1[3][0] * m2.w;
 			result.y = m1[0][1] * m2.x + m1[1][1] * m2.y + m1[2][1] * m2.z + m1[3][1] * m2.w;
 			result.z = m1[0][2] * m2.x + m1[1][2] * m2.y + m1[2][2] * m2.z + m1[3][2] * m2.w;
@@ -699,10 +700,22 @@ namespace dis
 			return result;
 		}
 
+		template<floating_point flt_t>
+		constexpr dish::vec4<flt_t> mul(const dish::mat4x4& m1, const dish::vec3<flt_t>& m2, flt_t m2_w)
+		{
+			dish::vec4<flt_t> result = {};
+			result.x = m1[0][0] * m2.x + m1[1][0] * m2.y + m1[2][0] * m2.z + m1[3][0] * m2_w;
+			result.y = m1[0][1] * m2.x + m1[1][1] * m2.y + m1[2][1] * m2.z + m1[3][1] * m2_w;
+			result.z = m1[0][2] * m2.x + m1[1][2] * m2.y + m1[2][2] * m2.z + m1[3][2] * m2_w;
+			result.w = m1[0][3] * m2.x + m1[1][3] * m2.y + m1[2][3] * m2.z + m1[3][3] * m2_w;
+			return result;
+		}
+
 		constexpr auto& get_tri_p0(triangle auto& tri) { return get_tri_pt<0>(tri); }
 		constexpr auto& get_tri_p1(triangle auto& tri) { return get_tri_pt<1>(tri); }
 		constexpr auto& get_tri_p2(triangle auto& tri) { return get_tri_pt<2>(tri); }
 
+		/*
 		constexpr floating_point auto intersect(const vector3 auto& ray_origin, const vector3 auto& ray_dir, const vector3 auto& plane_pos, const vector3 auto& plane_normal)
 		{
 			const floating_point auto denom = (plane_normal.x * ray_dir.x) + (plane_normal.y * ray_dir.y) + (plane_normal.z * ray_dir.z);
@@ -714,26 +727,73 @@ namespace dis
 			}
 			return static_cast<decltype(denom)>(-1.0f);
 		}
+		 */
 
-		//using vertex_t = vertex_from_tri_t<triangle_t>;
-		//using screen_space_vertex_t = screen_space_vertex<vertex_t>;
-		//constexpr auto tris_capacity = (2*2*2*2)+1;
-
-		//std::array<std::array<screen_space_vertex_t, 3>, tris_capacity>		clipped_tris; // NOLINT
-
-		template<typename user_defined_iterators_t>
-		constexpr void clip_user_defined_iterators(const user_defined_iterators_t& from, user_defined_iterators_t& to_mut, float perc)
+		template<vector3 vec3_t>
+		struct plane
 		{
-			user_defined_iterators_t diff = from;
-			diff *= -1.0f;
-			diff += to_mut;
-			to_mut = diff;
-			to_mut *= perc;
-			to_mut += from;
+			vec3_t pos, normal;
+		};
+
+		template<typename flt_t>
+		struct viewport
+		{
+			flt_t x_start, y_start, x_end, y_end;
+		};
+
+		namespace detail::clip_triangle
+		{
+
+			template<typename flt_t>
+			constexpr bool should_cut_to_quad(const plane<dish::vec3<flt_t>>& plane, const dish::vec3<flt_t>& a, const dish::vec3<flt_t>& b, const dish::vec3<flt_t>& c, bool intersects_a_to_b, bool intersects_b_to_c, bool intersects_c_to_a)
+			{
+				const vector3 auto& triangle_tip  		= (intersects_a_to_b && intersects_c_to_a) ? a : ((intersects_a_to_b && intersects_b_to_c) ? b : c);
+				const vector3 auto& any_other_tip 		= (intersects_a_to_b && intersects_c_to_a) ? b : ((intersects_a_to_b && intersects_b_to_c) ? c : a);
+				const vector3 auto	tip_to_tip			= sub_xyz(triangle_tip, any_other_tip);
+
+				return (tip_to_tip.x*plane.normal.x + tip_to_tip.y*plane.normal.y + tip_to_tip.z*plane.normal.z) < 0.0f;
+			}
+
+			template<typename flt_t>
+			constexpr flt_t intersect(const plane<dish::vec3<flt_t>>& plane, const dish::vec3<flt_t>& ray_origin, const dish::vec3<flt_t>& ray_dir)
+			{
+				const floating_point auto denom = (plane.normal.x * ray_dir.x) + (plane.normal.y * ray_dir.y) + (plane.normal.z * ray_dir.z);
+				if ((denom*denom) > static_cast<decltype(denom)>(0.0001 * 0.0001)) // your favorite epsilon
+				{
+					const vector3 auto 			d = sub_xyz(plane.pos, ray_origin);
+					const floating_point auto 	d_dot = dot_xyz(d, plane.normal);
+					return d_dot / denom;
+				}
+				return static_cast<decltype(denom)>(-1.0f);
+			}
+
+			template<typename flt_t>
+			constexpr int is_behind_clipping_plane(const plane<dish::vec3<flt_t>>& plane, const dish::vec3<flt_t>& pt)
+			{
+				return dot_xyz(sub_xyz(pt, plane.pos), plane.normal) > 0 ? 0 : -1;
+			}
+
+
+			template<typename flt_t>
+			constexpr flt_t intersect_top(const viewport<flt_t>& viewport, const dish::vec3<flt_t>& ray_origin, const dish::vec3<flt_t>& ray_dir)
+			{
+				return intersect(plane{ {0, viewport.y_end, 0}, {0, -1, 0} }, ray_origin, ray_dir);
+			}
+
+			template<typename flt_t>
+			constexpr flt_t intersect_bottom(const viewport<flt_t>& viewport, const dish::vec3<flt_t>& ray_origin, const dish::vec3<flt_t>& ray_dir)
+			{
+				return intersect(plane{{0, viewport.y_end, 0}, {0, -1, 0}}, ray_origin, ray_dir);
+			}
 		}
 
-		template<typename user_defined_iterators_t>
-		constexpr int clip_triangle(const vector3 auto& plane_pos, const vector3 auto& plane_normal, screen_space_clipped_pt_triangle<user_defined_iterators_t>& tri_in_out, screen_space_clipped_pt_triangle<user_defined_iterators_t>& tri_extra_out)
+		template<typename user_defined_iterators_t, typename intersect_func_t, typename is_behind_func_t, typename should_cut_to_quad_func_t>
+		constexpr int clip_triangle_ext(screen_space_clipped_pt_triangle<user_defined_iterators_t>& tri_in_out,
+										screen_space_clipped_pt_triangle<user_defined_iterators_t>& tri_extra_out,
+										intersect_func_t intersect_func,
+										is_behind_func_t is_behind_func,
+										should_cut_to_quad_func_t should_cut_to_quad_func,
+										const auto& func_argument)
 		{
 			using point_t = screen_space_clipped_pt<user_defined_iterators_t>;
 
@@ -757,37 +817,25 @@ namespace dis
 			const vector3 auto bc_dir = mul_xyz(bc_pt.screen_pos, bc_len_inv); // TODO: This can be precalculated
 			const vector3 auto ca_dir = mul_xyz(ca_pt.screen_pos, ca_len_inv); // TODO: This can be precalculated
 
-			const floating_point auto a_to_b_t = intersect(a_pt.screen_pos, ab_dir, plane_pos, plane_normal);
-			const floating_point auto b_to_c_t = intersect(b_pt.screen_pos, bc_dir, plane_pos, plane_normal);
-			const floating_point auto c_to_a_t = intersect(c_pt.screen_pos, ca_dir, plane_pos, plane_normal);
+			const floating_point auto a_to_b_t = intersect_func(func_argument, a_pt.screen_pos, ab_dir);
+			const floating_point auto b_to_c_t = intersect_func(func_argument, b_pt.screen_pos, bc_dir);
+			const floating_point auto c_to_a_t = intersect_func(func_argument, c_pt.screen_pos, ca_dir);
 
 			const bool intersects_a_to_b = (a_to_b_t > 0 && a_to_b_t < ab_len);
 			const bool intersects_b_to_c = (b_to_c_t > 0 && b_to_c_t < bc_len);
 			const bool intersects_c_to_a = (c_to_a_t > 0 && c_to_a_t < ca_len);
 
-			const float ab_perc = a_to_b_t * ab_len_inv;
-			const float bc_perc = b_to_c_t * bc_len_inv;
-			const float ca_perc = c_to_a_t * ca_len_inv;
+			const floating_point auto ab_perc = a_to_b_t * ab_len_inv;
+			const floating_point auto bc_perc = b_to_c_t * bc_len_inv;
+			const floating_point auto ca_perc = c_to_a_t * ca_len_inv;
 
 			point_t intersection_a_to_b_pt = a_pt + (ab_pt * ab_perc);
 			point_t intersection_b_to_c_pt = b_pt + (bc_pt * bc_perc);
 			point_t intersection_c_to_a_pt = c_pt + (ca_pt * ca_perc);
 
-			const vector3 auto& triangle_tip  = (intersects_a_to_b && intersects_c_to_a) ? a_pt.screen_pos : ((intersects_a_to_b && intersects_b_to_c) ? b_pt.screen_pos : c_pt.screen_pos);
-			const vector3 auto& any_other_tip = (intersects_a_to_b && intersects_c_to_a) ? b_pt.screen_pos : ((intersects_a_to_b && intersects_b_to_c) ? c_pt.screen_pos : a_pt.screen_pos);
-
 			if(intersects_a_to_b || intersects_b_to_c || intersects_c_to_a)
 			{
-				const vector3 auto	tip_to_tip			= sub_xyz(triangle_tip, any_other_tip);
-				const bool 			should_cut_to_quad 	= (tip_to_tip.x*plane_normal.x + tip_to_tip.y*plane_normal.y + tip_to_tip.z*plane_normal.z) < 0.0f;
-
-				struct from_to
-				{
-					std::uint_fast8_t from;
-					std::uint_fast8_t to;
-					float perc;
-				};
-
+				const bool should_cut_to_quad = should_cut_to_quad_func(func_argument, a_pt.screen_pos, b_pt.screen_pos, c_pt.screen_pos, intersects_a_to_b, intersects_b_to_c, intersects_c_to_a);
 				const point_t points[]  	= {a_pt, b_pt, c_pt, intersection_a_to_b_pt, intersection_b_to_c_pt, intersection_c_to_a_pt};
 
 				struct // NOLINT
@@ -833,20 +881,26 @@ namespace dis
 			}
 			else
 			{
-				return dot_xyz(sub_xyz(c_pt.screen_pos, plane_pos), plane_normal) > 0 ? 0 : -1;
+				return is_behind_func(func_argument, c_pt.screen_pos);
 			}
 			return 0;
 		}
 
+		template<typename user_defined_iterators_t, typename flt_t>
+		constexpr int clip_triangle(const plane<flt_t>& plane, screen_space_clipped_pt_triangle<user_defined_iterators_t>& tri_in_out, screen_space_clipped_pt_triangle<user_defined_iterators_t>& tri_extra_out)
+		{
+			using namespace detail::clip_triangle;
+			return clip_triangle_ext(tri_in_out, tri_extra_out, intersect<double>, is_behind_clipping_plane<double>, should_cut_to_quad<double>, plane);
+		}
+
 		template<draw_horizontal_line_ctx draw_ctx_t, triangle triangle_t, typename user_defined_iterators_t>
-		constexpr void draw_triangle(const triangle_t& source_triangle, const screen_space_clipped_pt_triangle<user_defined_iterators_t>& triangle, draw_horizontal_line_function<draw_ctx_t, triangle_t> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height,
-									 unsigned_integral auto viewport_x_start, unsigned_integral auto viewport_y_start, unsigned_integral auto viewport_x_end, unsigned_integral auto viewport_y_end)
+		constexpr void draw_triangle(const triangle_t& source_triangle, const screen_space_clipped_pt_triangle<user_defined_iterators_t>& triangle, draw_horizontal_line_function<draw_ctx_t, triangle_t> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height, const viewport<double>& viewport)
 		{
 			using clipped_tri = screen_space_clipped_pt_triangle<user_defined_iterators_t>;
 			constexpr auto tris_capacity = (2*2*2*2)+1;
 
-			std::array<clipped_tri, tris_capacity>		clipped_tris; // NOLINT
-			std::uint_fast8_t 							clipped_tris_num = 0;
+			clipped_tri				clipped_tris[tris_capacity]; // NOLINT
+			std::uint_fast8_t 		clipped_tris_num = 0;
 
 			// first just add the main triangle
 			clipped_tris[clipped_tris_num++] = triangle;
@@ -854,14 +908,13 @@ namespace dis
 			// clipping planes
 			// top clipping plane
 			{
-				const dish::vec3 n = {0, -1, 0};
-				const dish::vec3 o = {0, static_cast<float>(viewport_y_end), 0};
+				const plane<dish::vec3<double>> plane{{0, viewport.y_end, 0}, {0, -1, 0}};
 
 				for(std::uint_fast8_t i=clipped_tris_num; i--;)
 				{
 					clipped_tri& tri = clipped_tris[i];
 
-					const bool 					in_screen[3] 		= {tri[0].screen_pos.y < viewport_y_end, tri[1].screen_pos.y < viewport_y_end, tri[2].screen_pos.y < viewport_y_end};
+					const bool 					in_screen[3] 		= {tri[0].screen_pos.y < viewport.y_end, tri[1].screen_pos.y < viewport.y_end, tri[2].screen_pos.y < viewport.y_end};
 					const std::uint_fast8_t 	num_pts_in_screen 	= in_screen[0] + in_screen[1] + in_screen[2];
 
 					if(num_pts_in_screen == 0) // not in screen. delete
@@ -871,21 +924,20 @@ namespace dis
 					}
 					else if(num_pts_in_screen != 3) // otherwise nothing to clip. leave it
 					{
-						clipped_tris_num += clip_triangle<user_defined_iterators_t>(o, n, tri, clipped_tris[clipped_tris_num]);
+						clipped_tris_num += clip_triangle<user_defined_iterators_t>(plane, tri, clipped_tris[clipped_tris_num]);
 					}
 				}
 			}
 
 			// bot clipping plane
 			{
-				const dish::vec3 n = {0, 1, 0};
-				const dish::vec3 o = {0, static_cast<float>(viewport_y_start), 0};
+				const plane<dish::vec3<double>> plane{{0, viewport.y_start, 0}, {0, 1, 0}};
 
 				for(std::uint_fast8_t i=clipped_tris_num; i--;)
 				{
 					clipped_tri& tri = clipped_tris[i];
 
-					const bool 					in_screen[3] 		= {tri[0].screen_pos.y > viewport_y_start, tri[1].screen_pos.y > viewport_y_start, tri[2].screen_pos.y > viewport_y_start};
+					const bool 					in_screen[3] 		= {tri[0].screen_pos.y > viewport.y_start, tri[1].screen_pos.y > viewport.y_start, tri[2].screen_pos.y > viewport.y_start};
 					const std::uint_fast8_t 	num_pts_in_screen 	= in_screen[0] + in_screen[1] + in_screen[2];
 
 					if(num_pts_in_screen == 0) // not in screen. delete
@@ -895,21 +947,20 @@ namespace dis
 					}
 					else if(num_pts_in_screen != 3) // otherwise nothing to clip. leave it
 					{
-						clipped_tris_num += clip_triangle<user_defined_iterators_t>(o, n, tri, clipped_tris[clipped_tris_num]);
+						clipped_tris_num += clip_triangle<user_defined_iterators_t>(plane, tri, clipped_tris[clipped_tris_num]);
 					}
 				}
 			}
 
 			// left clipping plane
 			{
-				const dish::vec3 n = {1, 0, 0};
-				const dish::vec3 o = {static_cast<float>(viewport_x_start), 0, 0};
+				const plane<dish::vec3<double>> plane{{viewport.x_start, 0, 0}, {1, 0, 0}};
 
 				for(std::uint_fast8_t i=clipped_tris_num; i--;)
 				{
 					clipped_tri& tri = clipped_tris[i];
 
-					const bool 					in_screen[3] 		= {tri[0].screen_pos.x > viewport_x_start, tri[1].screen_pos.x > viewport_x_start, tri[2].screen_pos.x > viewport_x_start};
+					const bool 					in_screen[3] 		= {tri[0].screen_pos.x > viewport.x_start, tri[1].screen_pos.x > viewport.x_start, tri[2].screen_pos.x > viewport.x_start};
 					const std::uint_fast8_t 	num_pts_in_screen 	= in_screen[0] + in_screen[1] + in_screen[2];
 
 					if(num_pts_in_screen == 0) // not in screen. delete
@@ -919,21 +970,20 @@ namespace dis
 					}
 					else if(num_pts_in_screen != 3) // otherwise nothing to clip. leave it
 					{
-						clipped_tris_num += clip_triangle<user_defined_iterators_t>(o, n, tri, clipped_tris[clipped_tris_num]);
+						clipped_tris_num += clip_triangle<user_defined_iterators_t>(plane, tri, clipped_tris[clipped_tris_num]);
 					}
 				}
 			}
 
 			// right clipping plane
 			{
-				const dish::vec3 n = {-1, 0, 0};
-				const dish::vec3 o = {static_cast<float>(viewport_x_end), 0, 0};
+				const plane<dish::vec3<double>> plane{{viewport.x_end, 0, 0}, {-1, 0, 0}};
 
 				for(std::uint_fast8_t i=clipped_tris_num; i--;)
 				{
 					clipped_tri& tri = clipped_tris[i];
 
-					const bool 					in_screen[3] 		= {tri[0].screen_pos.x < viewport_x_end, tri[1].screen_pos.x < viewport_x_end, tri[2].screen_pos.x < viewport_x_end};
+					const bool 					in_screen[3] 		= {tri[0].screen_pos.x < viewport.x_end, tri[1].screen_pos.x < viewport.x_end, tri[2].screen_pos.x < viewport.x_end};
 					const std::uint_fast8_t 	num_pts_in_screen 	= in_screen[0] + in_screen[1] + in_screen[2];
 
 					if(num_pts_in_screen == 0) // not in screen. delete
@@ -943,7 +993,7 @@ namespace dis
 					}
 					else if(num_pts_in_screen != 3) // otherwise nothing to clip. leave it
 					{
-						clipped_tris_num += clip_triangle<user_defined_iterators_t>(o, n, tri, clipped_tris[clipped_tris_num]);
+						clipped_tris_num += clip_triangle<user_defined_iterators_t>(plane, tri, clipped_tris[clipped_tris_num]);
 					}
 				}
 			}
@@ -958,7 +1008,8 @@ namespace dis
 		template<draw_horizontal_line_ctx draw_ctx_t, triangle triangle_t, typename user_defined_iterators_t>
 		constexpr void draw_triangle(const triangle_t& source_triangle, const screen_space_clipped_pt_triangle<user_defined_iterators_t>& triangle, draw_horizontal_line_function<draw_ctx_t, triangle_t> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 		{
-			draw_triangle<draw_ctx_t, triangle_t, user_defined_iterators_t>(source_triangle, triangle, draw_hline_function, frame_width, frame_height, 1u, 1u, (frame_width-1), (frame_height-1));
+			viewport<double> viewport{1.0f, 1.0f, (float)(frame_width-1), (float)(frame_height-1)};
+			draw_triangle<draw_ctx_t, triangle_t, user_defined_iterators_t>(source_triangle, triangle, draw_hline_function, frame_width, frame_height, viewport);
 		}
 
 		constexpr dish::mat4x4 create_perspective(float fovy, float aspect, float z_near, float z_far)
@@ -1015,20 +1066,22 @@ namespace dis
 			using user_defined_iterators_t 	= std::conditional_t<has_user_defined_iterators<draw_ctx_t>, std::decay_t<decltype(std::declval<draw_ctx_t>().begin)>, std::nullptr_t>;
 			using clipped_tri_t 				= screen_space_clipped_pt_triangle<user_defined_iterators_t>;
 
-
 			const float target_width_flt 	= static_cast<float>(frame_width);  // NOLINT
 			const float target_height_flt 	= static_cast<float>(frame_height); // NOLINT
 			const float aspect = target_width_flt / target_height_flt;
 
-			const float near_plane 	= 0.1f;
-			const float far_plane 	= 100.0f;
+			const float near_plane 		= 0.0005f;
+			const float far_plane 		= 50.0f;
+			const float near_clip_plane = 0.1f;
 
-			const dish::mat4x4 perspective 	= create_perspective(camera.fov, aspect, near_plane / 10.0f, far_plane);
+			const dish::mat4x4 perspective 	= create_perspective(camera.fov, aspect, near_plane, far_plane);
 			const dish::mat4x4 lookat 		= create_lookat(glm::vec3{camera.pos.x, camera.pos.y, camera.pos.z}, glm::vec3{camera.lookat.x, camera.lookat.y, camera.lookat.z}, glm::vec3{camera.up.x, camera.up.y, camera.up.z});
-			const dish::mat4x4 projview 		= mul(perspective, lookat);
+			const dish::mat4x4 projview 	= mul(perspective, lookat);
 
-			const vector3 auto near_clipping_plane_normal 	= direction_to(camera.pos, camera.lookat);
-			const vector3 auto near_clipping_plane_pos 		= add_xyz(camera.pos, mul_xyz(near_clipping_plane_normal, near_plane));
+			const vector3 auto near_clipping_plane_normal_flt 	= direction_to(camera.pos, camera.lookat);
+			const vector3 auto near_clipping_plane_pos_flt 		= add_xyz(camera.pos, mul_xyz(near_clipping_plane_normal_flt, near_plane));
+			const dish::vec3<double> near_clipping_plane_normal = {near_clipping_plane_normal_flt.x, near_clipping_plane_normal_flt.y, near_clipping_plane_normal_flt.z};
+			const dish::vec3<double> near_clipping_plane_pos 	= {near_clipping_plane_pos_flt.x, near_clipping_plane_pos_flt.y, near_clipping_plane_pos_flt.z};
 
 			for(const triangle auto& tri : triangles)
 			{
@@ -1048,36 +1101,36 @@ namespace dis
 				num_clipped_tris++;
 
 				// clip near
-				num_clipped_tris += clip_triangle<user_defined_iterators_t>(near_clipping_plane_pos, near_clipping_plane_normal, clipped_tris[0], clipped_tris[1]);
+				const plane<dish::vec3<double>> plane{near_clipping_plane_pos, near_clipping_plane_normal};
+
+				num_clipped_tris += clip_triangle<user_defined_iterators_t>(plane, clipped_tris[0], clipped_tris[1]);
 
 				for(size_t clipped_tri_index=0; clipped_tri_index < num_clipped_tris; clipped_tri_index++)
 				{
 					clipped_tri_t& clipped_tri = clipped_tris[clipped_tri_index];
 
-					const dish::vec4 p0 = {clipped_tri[0].screen_pos.x, clipped_tri[0].screen_pos.y, clipped_tri[0].screen_pos.z, 1};
-					const dish::vec4 p1 = {clipped_tri[1].screen_pos.x, clipped_tri[1].screen_pos.y, clipped_tri[1].screen_pos.z, 1};
-					const dish::vec4 p2 = {clipped_tri[2].screen_pos.x, clipped_tri[2].screen_pos.y, clipped_tri[2].screen_pos.z, 1};
+					using flt_t = decltype(clipped_tri[0].screen_pos.x);
 
-					const dish::vec4 p0_projview = mul(projview, p0);
-					const dish::vec4 p1_projview = mul(projview, p1);
-					const dish::vec4 p2_projview = mul(projview, p2);
+					const vector4 auto p0_projview = mul(projview, clipped_tri[0].screen_pos, flt_t(1));
+					const vector4 auto p1_projview = mul(projview, clipped_tri[1].screen_pos, flt_t(1));
+					const vector4 auto p2_projview = mul(projview, clipped_tri[2].screen_pos, flt_t(1));
 
-					assert(p0_projview.w != 0.0f);
+					assert(p0_projview.w != flt_t(0));
 
-					clipped_tri[0].screen_pos.x = ((p0_projview.x / p0_projview.w) * 0.5f + 0.5f) * target_width_flt;
-					clipped_tri[0].screen_pos.y = ((p0_projview.y / p0_projview.w) * 0.5f + 0.5f) * target_height_flt;
+					clipped_tri[0].screen_pos.x = ((p0_projview.x / p0_projview.w) * flt_t(0.5) + flt_t(0.5)) * target_width_flt;
+					clipped_tri[0].screen_pos.y = ((p0_projview.y / p0_projview.w) * flt_t(0.5) + flt_t(0.5)) * target_height_flt;
 					clipped_tri[0].screen_pos.z = (p0_projview.z / p0_projview.w);
 
-					clipped_tri[1].screen_pos.x = ((p1_projview.x / p1_projview.w) * 0.5f + 0.5f) * target_width_flt;
-					clipped_tri[1].screen_pos.y = ((p1_projview.y / p1_projview.w) * 0.5f + 0.5f) * target_height_flt;
+					clipped_tri[1].screen_pos.x = ((p1_projview.x / p1_projview.w) * flt_t(0.5) + flt_t(0.5)) * target_width_flt;
+					clipped_tri[1].screen_pos.y = ((p1_projview.y / p1_projview.w) * flt_t(0.5) + flt_t(0.5)) * target_height_flt;
 					clipped_tri[1].screen_pos.z = (p1_projview.z / p1_projview.w);
 
-					clipped_tri[2].screen_pos.x = ((p2_projview.x / p2_projview.w) * 0.5f + 0.5f) * target_width_flt;
-					clipped_tri[2].screen_pos.y = ((p2_projview.y / p2_projview.w) * 0.5f + 0.5f) * target_height_flt;
+					clipped_tri[2].screen_pos.x = ((p2_projview.x / p2_projview.w) * flt_t(0.5) + flt_t(0.5)) * target_width_flt;
+					clipped_tri[2].screen_pos.y = ((p2_projview.y / p2_projview.w) * flt_t(0.5) + flt_t(0.5)) * target_height_flt;
 					clipped_tri[2].screen_pos.z = (p2_projview.z / p2_projview.w);
 
-					const float cross_z = (clipped_tri[1].screen_pos.x - clipped_tri[0].screen_pos.x) * (clipped_tri[2].screen_pos.y - clipped_tri[0].screen_pos.y) - (clipped_tri[2].screen_pos.x - clipped_tri[0].screen_pos.x) * (clipped_tri[1].screen_pos.y - clipped_tri[0].screen_pos.y);
-					const bool backface_culling = cross_z > 0.0f;
+					const floating_point auto cross_z = (clipped_tri[1].screen_pos.x - clipped_tri[0].screen_pos.x) * (clipped_tri[2].screen_pos.y - clipped_tri[0].screen_pos.y) - (clipped_tri[2].screen_pos.x - clipped_tri[0].screen_pos.x) * (clipped_tri[1].screen_pos.y - clipped_tri[0].screen_pos.y);
+					const bool backface_culling = cross_z > 0;
 
 					if(backface_culling)
 					{

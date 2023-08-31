@@ -12,7 +12,10 @@ namespace example::utils
 		public:
 			explicit camera(utils::input* input);
 			void 		update();
-			dish::cam 	to_grh();
+			dish::cam 	to_grh() const;
+			void 		set_position(const dish::vec3<float>& pos);
+			void 		set_rot(float pitch_radians, float yaw_radians);
+			void 		print_position() const;
 
 		private:
 			void 		update_movement();
@@ -22,7 +25,7 @@ namespace example::utils
 
 			float 		m_pitch = 0;
 			float 		m_yaw = M_PI / 2.0f;
-			dish::vec3 	m_pos = {0,0,0};
+			dish::vec3<float> 	m_pos = {0,0,0};
 			float 		m_fov = 90.0f / 57.2958f; // 90 degrees in radians
 
 			int 		m_mouse_button_state = 0;
