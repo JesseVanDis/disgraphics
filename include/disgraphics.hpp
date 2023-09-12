@@ -403,39 +403,23 @@ namespace dis
 		template<typename user_defined_iterators_t>
 		struct line_it<user_defined_iterators_t, std::enable_if_t<line_custom_iterable<user_defined_iterators_t>>> : line_it_base
 		{
+			flt_t one_over_z;
+			flt_t one_over_z_it;
+
 			user_defined_iterators_t user_defined;
 			user_defined_iterators_t user_defined_it;
-
-			flt_t one_over_z;
-			flt_t OneOverZStart;
-			flt_t OneOverZ;
-			flt_t OneOverZEnd;
-			flt_t OneOverZIt;
-
-			user_defined_iterators_t UVOverZStart;
-			user_defined_iterators_t UVOverZ;
-			user_defined_iterators_t UVOverZEnd;
-			user_defined_iterators_t UVOverZIt;
-
-			dish::vec2<flt_t> StartPoint;
-			dish::vec2<flt_t> EndPoint;
-			//flt_t z;
-			//flt_t z_it;
-
-			//UV uv_over_z;
-			//UV uv_over_z_it;
 
 			void increment()
 			{
 				increment_base();
+				one_over_z += one_over_z_it;
 				user_defined += user_defined_it;
-				OneOverZ += OneOverZIt;
-				UVOverZ += UVOverZIt;
 			}
 
 			void set(const screen_space_clipped_pt<user_defined_iterators_t>& p0, const screen_space_clipped_pt<user_defined_iterators_t>& p1)
 			{
 				const set_precalculated c = set_base(p0, p1);
+				// TODO: clean up the mess in this functions ( note, make use of the precalculated values in 'c' )
 
 				const float one_over_z_end 	= flt_t(1) / p1.screen_pos.z;
 				one_over_z 					= flt_t(1) / p0.screen_pos.z;
@@ -444,66 +428,29 @@ namespace dis
 				user_defined_iterators_t start  = p0.user_defined * one_over_z;
 				user_defined_iterators_t end    = p1.user_defined * one_over_z_end;
 
-				user_defined_it  = (end - start) * c.one_over_height_ceiled;
-				user_defined     = start + user_defined_it * c.sub_pixel;
-
-
-				auto recalculate = [this](float aOneOverZStart, float aOneOverZEnd, user_defined_iterators_t aUVOverZStart, user_defined_iterators_t aUVOverZEnd, dish::vec2<flt_t> aStartPoint, dish::vec2<flt_t> aEndPoint)
-						{
-
-							// set all values
-							this->OneOverZStart = aOneOverZStart;
-							this->OneOverZ = aOneOverZStart;
-							this->OneOverZEnd = aOneOverZEnd;
-							this->UVOverZStart = aUVOverZStart;
-							this->UVOverZ = aUVOverZStart;
-							this->UVOverZEnd = aUVOverZEnd;
-							this->StartPoint = aStartPoint;
-							this->EndPoint = aEndPoint;
-
-							//int y_start, height;
-							//flt_t x_it, x;
-
-
-							// set starting point
-							this->y_start = (int)std::ceil(StartPoint.y);
-							this->height = ((int)std::ceil(EndPoint.y)) - this->y_start;
-
-							float OverHeight = 1.0f / (float)this->height;
-
-							// interpolation
-							this->x_it = (aEndPoint.x - aStartPoint.x) * OverHeight;
-							this->OneOverZIt = (this->OneOverZEnd - this->OneOverZ) * OverHeight;
-							this->UVOverZIt = (this->UVOverZEnd - this->UVOverZ) * OverHeight;
-
-							// sub pixel
-							float	SubPixel = (float) std::ceil(this->StartPoint.y) - this->StartPoint.y;
-							this->x = this->StartPoint.x + (this->x_it * SubPixel);
-							UVOverZ = UVOverZ + (UVOverZIt * SubPixel);
-							OneOverZ = OneOverZ + (OneOverZIt * SubPixel);
-						};
-
-
 
 				flt_t Z1 = p0.view_pos.z, Z2 = p1.view_pos.z;
 				flt_t _OneOverZStart = flt_t(1) / Z1, _OneOverZEnd = flt_t(1) / Z2;
 				auto _UVOverZStart = p0.user_defined * _OneOverZStart;
 				auto _UVOverZEnd = p1.user_defined * _OneOverZEnd;
-				recalculate(_OneOverZStart, _OneOverZEnd, _UVOverZStart, _UVOverZEnd, {p0.screen_pos.x, p0.screen_pos.y}, {p1.screen_pos.x, p1.screen_pos.y});
 
+				this->one_over_z = _OneOverZStart;
+				this->user_defined = _UVOverZStart;
 
+				const float one_over_height = 1.0f / (float)this->height;
 
+				this->y_start = (int)std::ceil(p0.screen_pos.y);
+				this->height = ((int)std::ceil(p1.screen_pos.y)) - this->y_start;
 
+				this->x_it = (p1.screen_pos.x - p0.screen_pos.x) * one_over_height;
+				this->one_over_z_it = (_OneOverZEnd - this->one_over_z) * one_over_height;
+				this->user_defined_it = (_UVOverZEnd - this->user_defined) * one_over_height;
 
-
-
-				//const UV uv_over_z_start = {p0.vertex.u * one_over_z, p0.vertex.v * one_over_z};
-				//const UV uv_over_z_end = {p1.vertex.u * one_over_z_end, p1.vertex.v * one_over_z_end};
-
-				//uv_over_z_it.u = (uv_over_z_end.u - uv_over_z_start.u) * c.one_over_height_ceiled;
-				//uv_over_z_it.v = (uv_over_z_end.v - uv_over_z_start.v) * c.one_over_height_ceiled;
-				//uv_over_z.u = uv_over_z_start.u + uv_over_z_it.u * c.sub_pixel;
-				//uv_over_z.v = uv_over_z_start.v + uv_over_z_it.v * c.sub_pixel;
+				// sub pixel
+				float	SubPixel = (float) std::ceil(p0.screen_pos.y) - p0.screen_pos.y;
+				this->x = p0.screen_pos.x + (this->x_it * SubPixel);
+				user_defined = user_defined + (user_defined_it * SubPixel);
+				one_over_z = one_over_z + (one_over_z_it * SubPixel);
 			}
 		};
 
@@ -557,75 +504,21 @@ namespace dis
 		{
 			using flt_t = line_it<user_defined_iterators_t>::flt_t;
 
-			ctx.px_y 			= y;
-			ctx.px_x_from 		= static_cast<int>(left.x);
-			ctx.line_length_px 	= static_cast<int>(right.x) - ctx.px_x_from;
-
 			check_context_validity(ctx);
 
+			const flt_t left_x_floored 		= std::floor(left.x);
+			const flt_t width 				= right.x - left.x;
+			const flt_t one_over_width 		= flt_t(1) / width;
+			const flt_t sub_texel 			= (left_x_floored) - left.x;
 
-
-			int XLeft = (int)(left.x);
-			int XRight = (int)(right.x);
-
-			float Width = right.x - left.x;
-			float OneOverWidth = 1.0f / Width;
-
-			float SubTexel = ((float)XLeft) - left.x;
-
-			float OneOverZIt = (right.OneOverZ - left.OneOverZ) * OneOverWidth;
-			float OneOverZItMul4 = OneOverZIt * 4.0f;
-			float OneOverZ = left.OneOverZ + (OneOverZIt * SubTexel);
-
-			auto UVOverZIt = (right.UVOverZ - left.UVOverZ) * OneOverWidth;
-			auto UVOverZItMul4 = (right.UVOverZ - left.UVOverZ) * OneOverWidth * 4.0f;
-			auto UVOverZ = left.UVOverZ + (UVOverZIt * SubTexel);
-
-
-
-
-			//ctx.buffer_width;
-			//ctx.buffer_height;
 			ctx.px_y 			= y;
-			ctx.px_x_from 		= XLeft;
+			ctx.px_x_from 		= static_cast<decltype(ctx.px_x_from)>(left_x_floored);
 			ctx.line_length_px 	= static_cast<int>(right.x) - ctx.px_x_from;
-			ctx.one_over_z		= OneOverZ;
-			ctx.one_over_z_it	= OneOverZIt;
+			ctx.one_over_z_it	= (right.one_over_z - left.one_over_z) * one_over_width;
+			ctx.one_over_z		= left.one_over_z + (ctx.one_over_z_it * sub_texel);
+			ctx.it				= (right.user_defined - left.user_defined) * one_over_width;
+			ctx.begin			= left.user_defined + (ctx.it * sub_texel);
 
-			ctx.begin			= UVOverZ;
-			ctx.it				= UVOverZIt;
-
-
-			// get buffer items
-			//uint32_t BufferPos = XLeft + (Y*Pitch);
-			//float* DepthBufferPos = &DepthBuffer[BufferPos];
-			//UInt* CurrentBufferPos = &Buffer[BufferPos];
-
-			/*
-			if constexpr(has_user_defined_iterators<draw_ctx_t>)
-			{
-
-
-
-				const flt_t width = right.x - left.x;
-				const flt_t one_over_width = flt_t(1) / width;
-				const flt_t sub_texel = std::floor(left.x) - left.x;
-
-				const floating_point auto one_over_z_it = (right.one_over_z - left.one_over_z) * one_over_width;
-				const floating_point auto one_over_z 	= left.one_over_z + (one_over_z_it * sub_texel);
-
-				const floating_point auto z = flt_t(1)/one_over_z;
-
-				ctx.it 	= (right.user_defined - left.user_defined) * one_over_width;
-				ctx.begin = (left.user_defined + (ctx.it * sub_texel)) * z;
-
-				if constexpr(requires{ctx.one_over_z;})
-				{
-					ctx.one_over_z 		= one_over_z;
-					ctx.one_over_z_it 	= one_over_z_it;
-				}
-			}
-*/
 			draw_hline_function(source_triangle, ctx);
 
 			left.increment();
