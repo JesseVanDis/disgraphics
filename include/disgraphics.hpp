@@ -266,6 +266,7 @@ namespace dis
 		struct screen_space_clipped_pt
 		{
 			dish::vec3<float> screen_pos;
+			dish::vec3<float> view_pos;
 			user_defined_iterators_t user_defined; // xyz or uv ect... ( they need to be clipped as well )
 
 			screen_space_clipped_pt& operator -= (const screen_space_clipped_pt& other)
@@ -273,10 +274,10 @@ namespace dis
 				screen_pos.x -= other.screen_pos.x;
 				screen_pos.y -= other.screen_pos.y;
 				screen_pos.z -= other.screen_pos.z;
-				auto temp = user_defined;
-				user_defined = other.user_defined;
-				user_defined *= -1;
-				user_defined += temp;
+				view_pos.x   -= other.view_pos.x;
+				view_pos.y   -= other.view_pos.y;
+				view_pos.z   -= other.view_pos.z;
+				user_defined -= other.user_defined;
 				return *this;
 			}
 
@@ -285,6 +286,9 @@ namespace dis
 				screen_pos.x += other.screen_pos.x;
 				screen_pos.y += other.screen_pos.y;
 				screen_pos.z += other.screen_pos.z;
+				view_pos.x   += other.view_pos.x;
+				view_pos.y   += other.view_pos.y;
+				view_pos.z   += other.view_pos.z;
 				user_defined += other.user_defined;
 				return *this;
 			}
@@ -294,6 +298,9 @@ namespace dis
 				screen_pos.x *= other.screen_pos.x;
 				screen_pos.y *= other.screen_pos.y;
 				screen_pos.z *= other.screen_pos.z;
+				view_pos.x   *= other.view_pos.x;
+				view_pos.y   *= other.view_pos.y;
+				view_pos.z   *= other.view_pos.z;
 				user_defined *= other.user_defined;
 				return *this;
 			}
@@ -303,6 +310,9 @@ namespace dis
 				screen_pos.x *= v;
 				screen_pos.y *= v;
 				screen_pos.z *= v;
+				view_pos.x *= v;
+				view_pos.y *= v;
+				view_pos.z *= v;
 				user_defined *= v;
 				return *this;
 			}
@@ -346,12 +356,12 @@ namespace dis
 			int y_start, height;
 
 			flt_t x_it, x;
-			flt_t z_it, z;
+			//flt_t z_it, z;
 
 			void increment_base()
 			{
 				x += x_it;
-				z += z_it;
+			//	z += z_it;
 			}
 
 			struct set_precalculated
@@ -359,23 +369,24 @@ namespace dis
 				flt_t y_start_ceiled, height_ceiled, one_over_height_ceiled, sub_pixel;
 			};
 
-			set_precalculated set_base(const vector3 auto& p0_screen_pos, const vector3 auto& p1_screen_pos)
+			template<typename user_defined_iterators_t>
+			set_precalculated set_base(const screen_space_clipped_pt<user_defined_iterators_t>& p0, const screen_space_clipped_pt<user_defined_iterators_t>& p1)
 			{
 				set_precalculated c {
-					.y_start_ceiled 		= std::ceil(p0_screen_pos.y),
-					.height_ceiled 			= std::ceil(p1_screen_pos.y) - c.y_start_ceiled,
+					.y_start_ceiled 		= std::ceil(p0.screen_pos.y),
+					.height_ceiled 			= std::ceil(p1.screen_pos.y) - c.y_start_ceiled,
 					.one_over_height_ceiled = c.height_ceiled != flt_t(0) ? (flt_t(1) / c.height_ceiled) : flt_t(0),
-					.sub_pixel 				= c.y_start_ceiled - p0_screen_pos.y
+					.sub_pixel 				= c.y_start_ceiled - p0.screen_pos.y
 				};
 
 				//assert(height_ceiled != 0.0f); // this is going to be a division over 0 ! // TODO: handle this to avoid NaN
 
 				y_start    	= static_cast<int>(c.y_start_ceiled);
 				height     	= static_cast<int>(c.height_ceiled);
-				x_it 		= (p1_screen_pos.x - p0_screen_pos.x) * c.one_over_height_ceiled;
-				x			= p0_screen_pos.x + (x_it * c.sub_pixel);
-				z_it 		= (p1_screen_pos.z - p0_screen_pos.z) * c.one_over_height_ceiled;
-				z			= p0_screen_pos.z + (z_it * c.sub_pixel);
+				x_it 		= (p1.screen_pos.x - p0.screen_pos.x) * c.one_over_height_ceiled;
+				x			= p0.screen_pos.x + (x_it * c.sub_pixel);
+			//	z_it 		= (p1.view_pos.z - p0.view_pos.z) * c.one_over_height_ceiled;
+			//	z			= p0.view_pos.z + (z_it * c.sub_pixel);
 
 				return c;
 			}
@@ -396,6 +407,20 @@ namespace dis
 			user_defined_iterators_t user_defined_it;
 
 			flt_t one_over_z;
+			flt_t OneOverZStart;
+			flt_t OneOverZ;
+			flt_t OneOverZEnd;
+			flt_t OneOverZIt;
+
+			user_defined_iterators_t UVOverZStart;
+			user_defined_iterators_t UVOverZ;
+			user_defined_iterators_t UVOverZEnd;
+			user_defined_iterators_t UVOverZIt;
+
+			dish::vec2<flt_t> StartPoint;
+			dish::vec2<flt_t> EndPoint;
+			//flt_t z;
+			//flt_t z_it;
 
 			//UV uv_over_z;
 			//UV uv_over_z_it;
@@ -404,36 +429,73 @@ namespace dis
 			{
 				increment_base();
 				user_defined += user_defined_it;
-				//uv_over_z.u += uv_over_z_it.u;
-				//uv_over_z.v += uv_over_z_it.v;
+				OneOverZ += OneOverZIt;
+				UVOverZ += UVOverZIt;
 			}
 
 			void set(const screen_space_clipped_pt<user_defined_iterators_t>& p0, const screen_space_clipped_pt<user_defined_iterators_t>& p1)
 			{
-				const set_precalculated c = set_base(p0.screen_pos, p1.screen_pos);
+				const set_precalculated c = set_base(p0, p1);
 
 				const float one_over_z_end 	= flt_t(1) / p1.screen_pos.z;
 				one_over_z 					= flt_t(1) / p0.screen_pos.z;
+				//z = p0.screen_pos.z;
 
-				// below is equal to:
-				//   start = p0 * one_over_z
-				//   end   = p1 * one_over_z_end
-				//   v_it  = (end - start) * c.one_over_height_ceiled
-				//   v     = start + v_it * c.sub_pixel
+				user_defined_iterators_t start  = p0.user_defined * one_over_z;
+				user_defined_iterators_t end    = p1.user_defined * one_over_z_end;
 
-				user_defined_iterators_t inv_start;
-				inv_start = p0.user_defined;
-				inv_start *= -one_over_z;
+				user_defined_it  = (end - start) * c.one_over_height_ceiled;
+				user_defined     = start + user_defined_it * c.sub_pixel;
 
-				user_defined_it = p1.user_defined;
-				user_defined_it *= one_over_z_end;
-				user_defined_it += inv_start;
-				user_defined_it *= c.one_over_height_ceiled;
 
-				inv_start *= flt_t(-1);
-				user_defined = user_defined_it;
-				user_defined *= c.sub_pixel;
-				user_defined += inv_start;
+				auto recalculate = [this](float aOneOverZStart, float aOneOverZEnd, user_defined_iterators_t aUVOverZStart, user_defined_iterators_t aUVOverZEnd, dish::vec2<flt_t> aStartPoint, dish::vec2<flt_t> aEndPoint)
+						{
+
+							// set all values
+							this->OneOverZStart = aOneOverZStart;
+							this->OneOverZ = aOneOverZStart;
+							this->OneOverZEnd = aOneOverZEnd;
+							this->UVOverZStart = aUVOverZStart;
+							this->UVOverZ = aUVOverZStart;
+							this->UVOverZEnd = aUVOverZEnd;
+							this->StartPoint = aStartPoint;
+							this->EndPoint = aEndPoint;
+
+							//int y_start, height;
+							//flt_t x_it, x;
+
+
+							// set starting point
+							this->y_start = (int)std::ceil(StartPoint.y);
+							this->height = ((int)std::ceil(EndPoint.y)) - this->y_start;
+
+							float OverHeight = 1.0f / (float)this->height;
+
+							// interpolation
+							this->x_it = (aEndPoint.x - aStartPoint.x) * OverHeight;
+							this->OneOverZIt = (this->OneOverZEnd - this->OneOverZ) * OverHeight;
+							this->UVOverZIt = (this->UVOverZEnd - this->UVOverZ) * OverHeight;
+
+							// sub pixel
+							float	SubPixel = (float) std::ceil(this->StartPoint.y) - this->StartPoint.y;
+							this->x = this->StartPoint.x + (this->x_it * SubPixel);
+							UVOverZ = UVOverZ + (UVOverZIt * SubPixel);
+							OneOverZ = OneOverZ + (OneOverZIt * SubPixel);
+						};
+
+
+
+				flt_t Z1 = p0.view_pos.z, Z2 = p1.view_pos.z;
+				flt_t _OneOverZStart = flt_t(1) / Z1, _OneOverZEnd = flt_t(1) / Z2;
+				auto _UVOverZStart = p0.user_defined * _OneOverZStart;
+				auto _UVOverZEnd = p1.user_defined * _OneOverZEnd;
+				recalculate(_OneOverZStart, _OneOverZEnd, _UVOverZStart, _UVOverZEnd, {p0.screen_pos.x, p0.screen_pos.y}, {p1.screen_pos.x, p1.screen_pos.y});
+
+
+
+
+
+
 
 				//const UV uv_over_z_start = {p0.vertex.u * one_over_z, p0.vertex.v * one_over_z};
 				//const UV uv_over_z_end = {p1.vertex.u * one_over_z_end, p1.vertex.v * one_over_z_end};
@@ -455,7 +517,7 @@ namespace dis
 
 			void set(const screen_space_clipped_pt<user_defined_iterators_t>& p0, const screen_space_clipped_pt<user_defined_iterators_t>& p1)
 			{
-				set_base(p0.screen_pos, p1.screen_pos);
+				set_base(p0, p1);
 			}
 		};
 
@@ -501,8 +563,50 @@ namespace dis
 
 			check_context_validity(ctx);
 
+
+
+			int XLeft = (int)(left.x);
+			int XRight = (int)(right.x);
+
+			float Width = right.x - left.x;
+			float OneOverWidth = 1.0f / Width;
+
+			float SubTexel = ((float)XLeft) - left.x;
+
+			float OneOverZIt = (right.OneOverZ - left.OneOverZ) * OneOverWidth;
+			float OneOverZItMul4 = OneOverZIt * 4.0f;
+			float OneOverZ = left.OneOverZ + (OneOverZIt * SubTexel);
+
+			auto UVOverZIt = (right.UVOverZ - left.UVOverZ) * OneOverWidth;
+			auto UVOverZItMul4 = (right.UVOverZ - left.UVOverZ) * OneOverWidth * 4.0f;
+			auto UVOverZ = left.UVOverZ + (UVOverZIt * SubTexel);
+
+
+
+
+			//ctx.buffer_width;
+			//ctx.buffer_height;
+			ctx.px_y 			= y;
+			ctx.px_x_from 		= XLeft;
+			ctx.line_length_px 	= static_cast<int>(right.x) - ctx.px_x_from;
+			ctx.one_over_z		= OneOverZ;
+			ctx.one_over_z_it	= OneOverZIt;
+
+			ctx.begin			= UVOverZ;
+			ctx.it				= UVOverZIt;
+
+
+			// get buffer items
+			//uint32_t BufferPos = XLeft + (Y*Pitch);
+			//float* DepthBufferPos = &DepthBuffer[BufferPos];
+			//UInt* CurrentBufferPos = &Buffer[BufferPos];
+
+			/*
 			if constexpr(has_user_defined_iterators<draw_ctx_t>)
 			{
+
+
+
 				const flt_t width = right.x - left.x;
 				const flt_t one_over_width = flt_t(1) / width;
 				const flt_t sub_texel = std::floor(left.x) - left.x;
@@ -512,17 +616,8 @@ namespace dis
 
 				const floating_point auto z = flt_t(1)/one_over_z;
 
-				//ctx.it 	= (right.user_defined - left.user_defined) * one_over_width;
-				ctx.it = left.user_defined;
-				ctx.it *= -1;
-				ctx.it += right.user_defined;
-				ctx.it *= one_over_width;
-
-				//ctx.begin = (left.user_defined + (ctx.it * sub_texel)) * z;
-				ctx.begin = ctx.it;
-				ctx.begin *= sub_texel;
-				ctx.begin += left.user_defined;
-				ctx.begin *= z;
+				ctx.it 	= (right.user_defined - left.user_defined) * one_over_width;
+				ctx.begin = (left.user_defined + (ctx.it * sub_texel)) * z;
 
 				if constexpr(requires{ctx.one_over_z;})
 				{
@@ -530,7 +625,7 @@ namespace dis
 					ctx.one_over_z_it 	= one_over_z_it;
 				}
 			}
-
+*/
 			draw_hline_function(source_triangle, ctx);
 
 			left.increment();
@@ -1099,9 +1194,30 @@ namespace dis
 
 					using flt_t = decltype(clipped_tri[0].screen_pos.x);
 
-					const vector4 auto p0_projview = mul(projview, clipped_tri[0].screen_pos, flt_t(1));
-					const vector4 auto p1_projview = mul(projview, clipped_tri[1].screen_pos, flt_t(1));
-					const vector4 auto p2_projview = mul(projview, clipped_tri[2].screen_pos, flt_t(1));
+					const vector4 auto p0_view = mul(lookat, clipped_tri[0].screen_pos, flt_t(1));
+					const vector4 auto p1_view = mul(lookat, clipped_tri[1].screen_pos, flt_t(1));
+					const vector4 auto p2_view = mul(lookat, clipped_tri[2].screen_pos, flt_t(1));
+
+					const vector4 auto p0_projview = mul(perspective, p0_view);
+					const vector4 auto p1_projview = mul(perspective, p1_view);
+					const vector4 auto p2_projview = mul(perspective, p2_view);
+
+					/*
+					const glm::mat4 perspective4 	= glm::perspective(camera.fov, aspect, near_plane, far_plane);
+					const glm::mat4 lookat4 		= glm::lookAt(glm::vec3{camera.pos.x, camera.pos.y, camera.pos.z}, glm::vec3{camera.lookat.x, camera.lookat.y, camera.lookat.z}, glm::vec3{camera.up.x, camera.up.y, camera.up.z});
+
+					auto p0_test_glm = glm::project(glm::vec3{clipped_tri[0].screen_pos.x, clipped_tri[0].screen_pos.y, clipped_tri[0].screen_pos.z}, lookat4, perspective4, glm::vec4(0.0f,0.0f,(float)frame_width, (float)frame_height));
+					auto p1_test_glm = glm::project(glm::vec3{clipped_tri[1].screen_pos.x, clipped_tri[1].screen_pos.y, clipped_tri[1].screen_pos.z}, lookat4, perspective4, glm::vec4(0.0f,0.0f,(float)frame_width, (float)frame_height));
+					auto p2_test_glm = glm::project(glm::vec3{clipped_tri[2].screen_pos.x, clipped_tri[2].screen_pos.y, clipped_tri[2].screen_pos.z}, lookat4, perspective4, glm::vec4(0.0f,0.0f,(float)frame_width, (float)frame_height));
+
+					dish::vec3<float> p0_test = {p0_test_glm.x, p0_test_glm.y, p0_test_glm.z};
+					dish::vec3<float> p1_test = {p1_test_glm.x, p1_test_glm.y, p1_test_glm.z};
+					dish::vec3<float> p2_test = {p2_test_glm.x, p2_test_glm.y, p2_test_glm.z};
+					 */
+
+							//const vector4 auto p0_projview = mul(projview, clipped_tri[0].screen_pos, flt_t(1));
+					//const vector4 auto p1_projview = mul(projview, clipped_tri[1].screen_pos, flt_t(1));
+					//const vector4 auto p2_projview = mul(projview, clipped_tri[2].screen_pos, flt_t(1));
 
 					assert(p0_projview.w != flt_t(0));
 
@@ -1116,6 +1232,34 @@ namespace dis
 					clipped_tri[2].screen_pos.x = ((p2_projview.x / p2_projview.w) * flt_t(0.5) + flt_t(0.5)) * target_width_flt;
 					clipped_tri[2].screen_pos.y = ((p2_projview.y / p2_projview.w) * flt_t(0.5) + flt_t(0.5)) * target_height_flt;
 					clipped_tri[2].screen_pos.z = (p2_projview.z / p2_projview.w);
+
+					clipped_tri[0].view_pos.x = p0_view.x;
+					clipped_tri[0].view_pos.y = p0_view.y;
+					clipped_tri[0].view_pos.z = p0_view.z;
+
+					clipped_tri[1].view_pos.x = p1_view.x;
+					clipped_tri[1].view_pos.y = p1_view.y;
+					clipped_tri[1].view_pos.z = p1_view.z;
+
+					clipped_tri[2].view_pos.x = p2_view.x;
+					clipped_tri[2].view_pos.y = p2_view.y;
+					clipped_tri[2].view_pos.z = p2_view.z;
+
+					//clipped_tri[0].screen_pos.z = p0_view.z;
+					//clipped_tri[1].screen_pos.z = p1_view.z;
+					//clipped_tri[2].screen_pos.z = p2_view.z;
+
+					/*
+					clipped_tri[0].screen_pos.x = p0_test.x;
+					clipped_tri[0].screen_pos.y = p0_test.y;
+					clipped_tri[0].screen_pos.z = p0_test.z;
+					clipped_tri[1].screen_pos.x = p1_test.x;
+					clipped_tri[1].screen_pos.y = p1_test.y;
+					clipped_tri[1].screen_pos.z = p1_test.z;
+					clipped_tri[2].screen_pos.x = p2_test.x;
+					clipped_tri[2].screen_pos.y = p2_test.y;
+					clipped_tri[2].screen_pos.z = p2_test.z;
+					 */
 
 					const floating_point auto cross_z = (clipped_tri[1].screen_pos.x - clipped_tri[0].screen_pos.x) * (clipped_tri[2].screen_pos.y - clipped_tri[0].screen_pos.y) - (clipped_tri[2].screen_pos.x - clipped_tri[0].screen_pos.x) * (clipped_tri[1].screen_pos.y - clipped_tri[0].screen_pos.y);
 					const bool backface_culling = cross_z > 0;

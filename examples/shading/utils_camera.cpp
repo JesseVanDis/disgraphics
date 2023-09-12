@@ -1,4 +1,6 @@
 #include <iostream>
+#include <glm/glm.hpp>
+#include <glm/ext.hpp>
 #include "utils_camera.hpp"
 
 namespace example::utils
@@ -20,12 +22,14 @@ namespace example::utils
 
 	dish::cam camera::to_grh() const
 	{
-		const dish::vec3<float> front = {std::cos(m_yaw) * std::cos(m_pitch), std::sin(m_pitch), std::sin(m_yaw) * std::cos(m_pitch)};
+		glm::mat4 rot = glm::rotate(glm::rotate(glm::identity<glm::mat4>(), m_yaw, glm::vec3(0,1,0)), m_pitch, glm::vec3(1,0,0));
+		glm::vec4 z_dir = rot * glm::vec4(0,0,1,0);
+		glm::vec4 y_dir = rot * glm::vec4(0,1,0,0);
 
 		return dish::cam {
 				.pos = m_pos,
-				.lookat = {m_pos.x + front.x, m_pos.y + front.y, m_pos.z + front.z},
-				.up = {0,1,0},
+				.lookat = {m_pos.x + z_dir.x, m_pos.y + z_dir.y, m_pos.z + z_dir.z},
+				.up = {y_dir.x, y_dir.y, y_dir.z},
 				.fov = m_fov
 		};
 	}
@@ -49,7 +53,11 @@ namespace example::utils
 	void camera::update_movement()
 	{
 		constexpr float speed = 0.05f;
-		const dish::vec3<float> cam_dir = {std::cos(m_yaw) * std::cos(m_pitch), std::sin(m_pitch), std::sin(m_yaw) * std::cos(m_pitch)};
+		//const dish::vec3<float> cam_dir = {std::cos(m_yaw) * std::cos(m_pitch), std::sin(m_pitch), std::sin(m_yaw) * std::cos(m_pitch)};
+
+		const auto grh = to_grh();
+		const dish::vec3<float> cam_dir {grh.lookat.x - grh.pos.x, grh.lookat.y - grh.pos.y, grh.lookat.z - grh.pos.z};
+
 		dish::vec3<float> cam_tan = {-cam_dir.z, 0, cam_dir.x};
 		if(cam_tan.x != 0.0f && cam_tan.z != 0.0f)
 		{
@@ -88,8 +96,8 @@ namespace example::utils
 			m_mouse_last_y = mouse_y;
 		}
 
-		const double xoffset = (mouse_x - m_mouse_last_x) * s_mouse_sensitivity;
-		const double yoffset = (m_mouse_last_y - mouse_y) * s_mouse_sensitivity; // reversed since y-coordinates go from bottom to top
+		const double xoffset = (m_mouse_last_x - mouse_x) * s_mouse_sensitivity;
+		const double yoffset = (mouse_y - m_mouse_last_y) * s_mouse_sensitivity; // reversed since y-coordinates go from bottom to top
 		m_mouse_last_x = mouse_x;
 		m_mouse_last_y = mouse_y;
 

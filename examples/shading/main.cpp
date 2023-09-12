@@ -12,7 +12,7 @@ namespace example
 	constexpr size_t screen_width = 800;
 	constexpr size_t screen_height = 800;
 
-	constexpr size_t scale = 1;
+	constexpr size_t scale = 4;
 
 
 	struct vertex
@@ -68,28 +68,49 @@ namespace example
 				return *this;
 			}
 
+			vertex_it& operator -= (const vertex_it& other)
+			{
+				dish::for_each_field(*this, other, [](auto& a, const auto& b){ a -= b;});
+				return *this;
+			}
+
 			vertex_it& operator *= (dis::arithmetic auto other)
 			{
 				dish::for_each_field(*this, other, [](auto& a, const auto& b){ a *= b;});
 				return *this;
 			}
+
+			vertex_it operator * (dis::arithmetic auto other) const
+			{
+				vertex_it t = *this;
+				t *= other;
+				return t;
+			}
+
+			vertex_it operator - (const vertex_it& other) const
+			{
+				vertex_it t = *this;
+				t -= other;
+				return t;
+			}
+
+			vertex_it operator + (const vertex_it& other) const
+			{
+				vertex_it t = *this;
+				t += other;
+				return t;
+			}
+
 		};
 
 		vertex_it begin;
 		vertex_it it;
 	};
 
-	//void test(const tri& source_triangle, const draw_ctx& ctx)
-	//{
-	//}
-
-	//void test2(gr::draw_horizontal_line_function<draw_ctx, tri> auto func)
-	//{
-		//static_assert(gr::draw_horizontal_line_function<decltype(func), draw_ctx, gr::triangle_from_list_t<std::vector<tri>>>);
-	//}
-
 	bool app()
 	{
+		//todo: Just use an openGL solution that matched this libraries interface for now
+
 		auto window = utils::create_window(screen_width, screen_height, "local positioning sim", scale);
 		if(window == nullptr)
 		{
@@ -106,43 +127,29 @@ namespace example
 		{
 			uint32_t 				buffer_width, buffer_height;
 			tex						texture;
-			std::vector<uint32_t> 	pixels;//((screen_width / scale) * (screen_height / scale), 0x0);
+			std::vector<uint32_t> 	pixels;
 
 			inline void operator()(const tri& source_triangle, const draw_ctx& ctx)
 			{
 				uint32_t* px = &pixels[ctx.px_x_from + ctx.px_y * buffer_width];
-				float one_over_z = ctx.one_over_z;
 				auto it = ctx.begin;
 
-				//uint8_t uu = (uint8_t)std::clamp(it.u * 255.0f, 0.0f, 255.0f);
-
-				float ZZ = (1.0f/one_over_z);
-				//printf("%f\n", it.u);
+				float one_over_z = ctx.one_over_z;
+				auto uv_over_z = ctx.begin;
 
 				for(size_t i=0; i<ctx.line_length_px; i++)
 				{
-					float Z = (1.0f/one_over_z);
+					float z = (1.0f/one_over_z);
+					float u = uv_over_z.u * z;
+					float v = uv_over_z.v * z;
 
-					uint8_t u = (uint8_t)std::clamp(it.u * 255.0, 0.0, 255.0);
-					uint8_t v = (uint8_t)std::clamp(it.v * 255.0, 0.0, 255.0);
-
-					//uint8_t color = u;//std::clamp(Z, 0.0f, 255.0f);
-
-					//px[i] = (u << 24) + (u << 16) + (v << 8) + (v << 0);
-					// u = red
-					// v = blue
-					px[i] = (0 << 24) + (v << 16) + (0 << 8) + (u << 0);
-
+					uint32_t u_tex = std::min((uint32_t)texture.texture_width, (uint32_t)std::floor(u * (double)texture.texture_width));
+					uint32_t v_tex = std::min((uint32_t)texture.texture_height, (uint32_t)std::floor(v * (double)texture.texture_width));
+					px[i] = texture.rgba[u_tex + v_tex * texture.texture_width];
+					it += ctx.it;
 					one_over_z += ctx.one_over_z_it;
-					//dis::detail::add(it, ctx.it);
-					it = ctx.it;
-					it *= (float)i;
-					it += ctx.begin;
+					uv_over_z += ctx.it;
 				}
-
-				//auto begin = std::next(pixels.begin(), ctx.px_x_from + ctx.px_y * buffer_width);
-				//auto end = std::next(begin, ctx.line_length_px);
-				//std::fill(begin, end, 0xffffffff);
 			}
 		} draw;
 		draw.buffer_width 	= (screen_width / scale);
@@ -151,13 +158,23 @@ namespace example
 		draw.pixels.resize(draw.buffer_width * draw.buffer_height, 0x0);
 
 		// scene
+		vertex aruco_mesh[] = {
+				{0,0,5,  0,0},
+				{2,0,5,  1,0},
+				{2,2,5,  1,1},
+				{0,2,5,  0,1},
+		};
 		std::vector<tri> triangles;
+		triangles.push_back(tri{aruco_mesh[0], aruco_mesh[1], aruco_mesh[2]});
+		triangles.push_back(tri{aruco_mesh[0], aruco_mesh[2], aruco_mesh[3]});
 
+		/*
 		triangles.push_back(tri{
 				.p0  = {0,0,5,  0,0},
 				.p1  = {2,0,5,  1,0},
 				.p2  = {2,2,5,  1,1},
 		});
+		 */
 
 		cam.set_position(dish::vec3<float>{0.128768, 0.391487, 4.58175});
 		cam.set_rot(-0.899999, 0.790792);

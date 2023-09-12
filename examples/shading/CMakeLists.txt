@@ -22,6 +22,7 @@ CPMAddPackage(
         "GLFW_BUILD_DOCS Off"
         "GLFW_INSTALL Off"
         "GLFW_USE_HYBRID_HPG On"
+        "GLFW_USE_WAYLAND On" # for wayland, make sure you install 'extra-cmake-modules wayland-devel wayland-protocols-devel libxkbcommon-devel freeglut-devel'
 )
 include_directories("${glfw_SOURCE_DIR}/include")
 include_directories("${glm_SOURCE_DIR}")
