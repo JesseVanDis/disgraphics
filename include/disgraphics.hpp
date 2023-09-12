@@ -354,14 +354,11 @@ namespace dis
 			using flt_t = float;
 
 			int y_start, height;
-
 			flt_t x_it, x;
-			//flt_t z_it, z;
 
 			void increment_base()
 			{
 				x += x_it;
-			//	z += z_it;
 			}
 
 			struct set_precalculated
@@ -380,22 +377,13 @@ namespace dis
 				};
 
 				//assert(height_ceiled != 0.0f); // this is going to be a division over 0 ! // TODO: handle this to avoid NaN
-
 				y_start    	= static_cast<int>(c.y_start_ceiled);
 				height     	= static_cast<int>(c.height_ceiled);
 				x_it 		= (p1.screen_pos.x - p0.screen_pos.x) * c.one_over_height_ceiled;
 				x			= p0.screen_pos.x + (x_it * c.sub_pixel);
-			//	z_it 		= (p1.view_pos.z - p0.view_pos.z) * c.one_over_height_ceiled;
-			//	z			= p0.view_pos.z + (z_it * c.sub_pixel);
-
 				return c;
 			}
 		};
-
-		//struct UV
-		//{
-		//	float u,v;
-		//};
 
 		template<typename user_defined_iterators_t, typename enable = void>
 		struct line_it;
@@ -419,38 +407,20 @@ namespace dis
 			void set(const screen_space_clipped_pt<user_defined_iterators_t>& p0, const screen_space_clipped_pt<user_defined_iterators_t>& p1)
 			{
 				const set_precalculated c = set_base(p0, p1);
-				// TODO: clean up the mess in this functions ( note, make use of the precalculated values in 'c' )
 
-				const float one_over_z_end 	= flt_t(1) / p1.screen_pos.z;
-				one_over_z 					= flt_t(1) / p0.screen_pos.z;
-				//z = p0.screen_pos.z;
+				// begin and end values
+				const flt_t one_over_z_start	= flt_t(1) / p0.view_pos.z;
+				const flt_t one_over_z_end 		= flt_t(1) / p1.view_pos.z;
+				const auto 	one_over_uv_start	= p0.user_defined * one_over_z_start;
+				const auto 	one_over_uv_end		= p1.user_defined * one_over_z_end;
 
-				user_defined_iterators_t start  = p0.user_defined * one_over_z;
-				user_defined_iterators_t end    = p1.user_defined * one_over_z_end;
-
-
-				flt_t Z1 = p0.view_pos.z, Z2 = p1.view_pos.z;
-				flt_t _OneOverZStart = flt_t(1) / Z1, _OneOverZEnd = flt_t(1) / Z2;
-				auto _UVOverZStart = p0.user_defined * _OneOverZStart;
-				auto _UVOverZEnd = p1.user_defined * _OneOverZEnd;
-
-				this->one_over_z = _OneOverZStart;
-				this->user_defined = _UVOverZStart;
-
-				const float one_over_height = 1.0f / (float)this->height;
-
-				this->y_start = (int)std::ceil(p0.screen_pos.y);
-				this->height = ((int)std::ceil(p1.screen_pos.y)) - this->y_start;
-
-				this->x_it = (p1.screen_pos.x - p0.screen_pos.x) * one_over_height;
-				this->one_over_z_it = (_OneOverZEnd - this->one_over_z) * one_over_height;
-				this->user_defined_it = (_UVOverZEnd - this->user_defined) * one_over_height;
+				// set iterators
+				one_over_z_it   = (one_over_z_end  - one_over_z_start ) * c.one_over_height_ceiled;
+				user_defined_it = (one_over_uv_end - one_over_uv_start) * c.one_over_height_ceiled;
 
 				// sub pixel
-				float	SubPixel = (float) std::ceil(p0.screen_pos.y) - p0.screen_pos.y;
-				this->x = p0.screen_pos.x + (this->x_it * SubPixel);
-				user_defined = user_defined + (user_defined_it * SubPixel);
-				one_over_z = one_over_z + (one_over_z_it * SubPixel);
+				one_over_z   = one_over_z_start  + (one_over_z_it   * c.sub_pixel);
+				user_defined = one_over_uv_start + (user_defined_it * c.sub_pixel);
 			}
 		};
 
@@ -480,11 +450,12 @@ namespace dis
 			assert(ctx.px_y 		< ctx.buffer_height);
 			assert(ctx.px_x_from 	< ctx.buffer_width);
 			assert(to				< ctx.buffer_width);
+			assert(ctx.line_length_px	< 100000);
 #else
 			ctx.px_y 			= std::clamp(ctx.px_y, 		0u, (uint32_t)(ctx.buffer_height-1));
 			ctx.px_x_from 		= std::clamp(ctx.px_x_from, 0u, (uint32_t)(ctx.buffer_width-1));
 			int to = std::clamp(ctx.px_x_from + ctx.line_length_px, 0u, (uint32_t)(ctx.buffer_width-1));
-			if(to <= ctx.px_x_from)
+			if(to <= ctx.px_x_from || (to <= ctx.px_x_from) || ctx.line_length_px > 100000)
 			{
 				ctx.line_length_px = 0;
 			}
@@ -504,8 +475,6 @@ namespace dis
 		{
 			using flt_t = line_it<user_defined_iterators_t>::flt_t;
 
-			check_context_validity(ctx);
-
 			const flt_t left_x_floored 		= std::floor(left.x);
 			const flt_t width 				= right.x - left.x;
 			const flt_t one_over_width 		= flt_t(1) / width;
@@ -518,6 +487,8 @@ namespace dis
 			ctx.one_over_z		= left.one_over_z + (ctx.one_over_z_it * sub_texel);
 			ctx.it				= (right.user_defined - left.user_defined) * one_over_width;
 			ctx.begin			= left.user_defined + (ctx.it * sub_texel);
+
+			check_context_validity(ctx);
 
 			draw_hline_function(source_triangle, ctx);
 

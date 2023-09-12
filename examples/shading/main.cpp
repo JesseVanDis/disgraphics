@@ -12,7 +12,7 @@ namespace example
 	constexpr size_t screen_width = 800;
 	constexpr size_t screen_height = 800;
 
-	constexpr size_t scale = 4;
+	constexpr size_t scale = 1;
 
 
 	struct vertex
@@ -132,23 +132,21 @@ namespace example
 			inline void operator()(const tri& source_triangle, const draw_ctx& ctx)
 			{
 				uint32_t* px = &pixels[ctx.px_x_from + ctx.px_y * buffer_width];
-				auto it = ctx.begin;
 
-				float one_over_z = ctx.one_over_z;
-				auto uv_over_z = ctx.begin;
+				auto 	current 	= ctx.begin;
+				float 	one_over_z 	= ctx.one_over_z;
 
 				for(size_t i=0; i<ctx.line_length_px; i++)
 				{
 					float z = (1.0f/one_over_z);
-					float u = uv_over_z.u * z;
-					float v = uv_over_z.v * z;
+					float u = current.u * z;
+					float v = current.v * z;
 
 					uint32_t u_tex = std::min((uint32_t)texture.texture_width, (uint32_t)std::floor(u * (double)texture.texture_width));
 					uint32_t v_tex = std::min((uint32_t)texture.texture_height, (uint32_t)std::floor(v * (double)texture.texture_width));
 					px[i] = texture.rgba[u_tex + v_tex * texture.texture_width];
-					it += ctx.it;
+					current += ctx.it;
 					one_over_z += ctx.one_over_z_it;
-					uv_over_z += ctx.it;
 				}
 			}
 		} draw;
@@ -167,14 +165,6 @@ namespace example
 		std::vector<tri> triangles;
 		triangles.push_back(tri{aruco_mesh[0], aruco_mesh[1], aruco_mesh[2]});
 		triangles.push_back(tri{aruco_mesh[0], aruco_mesh[2], aruco_mesh[3]});
-
-		/*
-		triangles.push_back(tri{
-				.p0  = {0,0,5,  0,0},
-				.p1  = {2,0,5,  1,0},
-				.p2  = {2,2,5,  1,1},
-		});
-		 */
 
 		cam.set_position(dish::vec3<float>{0.128768, 0.391487, 4.58175});
 		cam.set_rot(-0.899999, 0.790792);
