@@ -7,20 +7,17 @@
 #include "utils_window.hpp"
 #include "utils_camera.hpp"
 
+
 namespace example
 {
 	constexpr size_t screen_width = 800;
 	constexpr size_t screen_height = 800;
-
 	constexpr size_t scale = 1;
-
 
 	struct vertex
 	{
 		float x, y, z;
 		float u, v;
-
-		constexpr vertex operator + (float other) const { return {x + other, y + other, z + other, u + other, v + other}; }
 	};
 
 	struct tri
@@ -28,25 +25,30 @@ namespace example
 		vertex p0, p1, p2;
 	};
 
+	template<typename DataType>
 	struct tex
 	{
-		std::span<const uint32_t> 	rgba;
-		size_t 						texture_width = {};
-		size_t 						texture_height = {};
+		tex(std::span<DataType> rgba, size_t width, size_t height) : rgba(rgba), width(width), height(height){}
+		tex(std::string_view    rgba, size_t width, size_t height) requires std::is_const_v<DataType> : rgba(reinterpret_cast<DataType*>(rgba.data()), rgba.size() / sizeof(DataType)), width(width), height(height){}
+
+		std::span<DataType> 	rgba;
+		size_t 					width = {};
+		size_t 					height = {};
 	};
 
-	struct draw_ctx
+	struct shader
 	{
-		uint32_t buffer_width;
-		uint32_t buffer_height;
-		uint32_t px_y, px_x_from, line_length_px;
+		shader(tex<uint32_t> target, tex<const uint32_t> texture)
+			: target(target)
+			, texture(texture)
+		{}
 
-		float one_over_z;
-		float one_over_z_it;
+		tex<uint32_t> 			target;
+		tex<const uint32_t>	  	texture;
 
-		struct vertex_it
+		struct vertex_to_fragment
 		{
-			float u, v;
+			float u = 0, v = 0;
 
 			template<unsigned int index>
 			static auto& get_field(auto& self) requires (index < 2)
@@ -54,63 +56,23 @@ namespace example
 				if constexpr(index == 0) { return self.u; }
 				if constexpr(index == 1) { return self.v; }
 			}
-
-			vertex_it& operator = (const vertex& other)
-			{
-				u = other.u;
-				v = other.v;
-				return *this;
-			}
-
-			vertex_it& operator += (const vertex_it& other)
-			{
-				dish::for_each_field(*this, other, [](auto& a, const auto& b){ a += b;});
-				return *this;
-			}
-
-			vertex_it& operator -= (const vertex_it& other)
-			{
-				dish::for_each_field(*this, other, [](auto& a, const auto& b){ a -= b;});
-				return *this;
-			}
-
-			vertex_it& operator *= (dis::arithmetic auto other)
-			{
-				dish::for_each_field(*this, other, [](auto& a, const auto& b){ a *= b;});
-				return *this;
-			}
-
-			vertex_it operator * (dis::arithmetic auto other) const
-			{
-				vertex_it t = *this;
-				t *= other;
-				return t;
-			}
-
-			vertex_it operator - (const vertex_it& other) const
-			{
-				vertex_it t = *this;
-				t -= other;
-				return t;
-			}
-
-			vertex_it operator + (const vertex_it& other) const
-			{
-				vertex_it t = *this;
-				t += other;
-				return t;
-			}
-
 		};
 
-		vertex_it begin;
-		vertex_it it;
+		inline vertex_to_fragment vertex(const vertex& other) // NOLINT
+		{
+			return vertex_to_fragment{other.u, other.v};
+		}
+
+		inline void fragment(const tri& /* source_triangle */, const dis::frag_vars<vertex_to_fragment>& in) // NOLINT
+		{
+			uint32_t u_tex = std::min((uint32_t)texture.width,  (uint32_t)std::floor(in.u * (double)texture.width ));
+			uint32_t v_tex = std::min((uint32_t)texture.height, (uint32_t)std::floor(in.v * (double)texture.height));
+			target.rgba[in.px_index] = texture.rgba[u_tex + v_tex * texture.width];
+		}
 	};
 
 	bool app()
 	{
-		//todo: Just use an openGL solution that matched this libraries interface for now
-
 		auto window = utils::create_window(screen_width, screen_height, "local positioning sim", scale);
 		if(window == nullptr)
 		{
@@ -118,42 +80,13 @@ namespace example
 		}
 		utils::camera cam(window.get());
 
-		constexpr size_t texture_width = 2;
-		constexpr size_t texture_height = 2;
-		const std::array<uint32_t, texture_width * texture_height> texture {0xffff0000, 0xff00ff00, 0xff0000ff, 0xff444444};
+		const size_t frame_width  = (screen_width / scale);
+		const size_t frame_height = (screen_height / scale);
 
 		// drawing functions
-		struct
-		{
-			uint32_t 				buffer_width, buffer_height;
-			tex						texture;
-			std::vector<uint32_t> 	pixels;
-
-			inline void operator()(const tri& source_triangle, const draw_ctx& ctx)
-			{
-				uint32_t* px = &pixels[ctx.px_x_from + ctx.px_y * buffer_width];
-
-				auto 	current 	= ctx.begin;
-				float 	one_over_z 	= ctx.one_over_z;
-
-				for(size_t i=0; i<ctx.line_length_px; i++)
-				{
-					float z = (1.0f/one_over_z);
-					float u = current.u * z;
-					float v = current.v * z;
-
-					uint32_t u_tex = std::min((uint32_t)texture.texture_width, (uint32_t)std::floor(u * (double)texture.texture_width));
-					uint32_t v_tex = std::min((uint32_t)texture.texture_height, (uint32_t)std::floor(v * (double)texture.texture_width));
-					px[i] = texture.rgba[u_tex + v_tex * texture.texture_width];
-					current += ctx.it;
-					one_over_z += ctx.one_over_z_it;
-				}
-			}
-		} draw;
-		draw.buffer_width 	= (screen_width / scale);
-		draw.buffer_height	= (screen_height / scale);
-		draw.texture 		= {texture, texture_width, texture_height};
-		draw.pixels.resize(draw.buffer_width * draw.buffer_height, 0x0);
+		std::vector<uint32_t> 	frame_pixels(frame_width * frame_height, 0x0);
+		tex<uint32_t> 			frame(frame_pixels, frame_width, frame_height);
+		tex<const uint32_t> 	texture("\x00\x00\xff\xff" "\x00\xff\x00\xff" "\xff\x00\x00\xff" "\x44\x44\x44\xff", 2, 2);
 
 		// scene
 		vertex aruco_mesh[] = {
@@ -174,10 +107,10 @@ namespace example
 		{
 			cam.update();
 			//cam.print_position();
-			std::fill(draw.pixels.begin(), draw.pixels.end(), 0xff777777);
+			std::fill(frame.rgba.begin(), frame.rgba.end(), 0xff777777);
 
-			dis::render<draw_ctx>(triangles, cam.to_grh(), draw, screen_width / scale, screen_height / scale);
-			window->draw(draw.pixels);
+			dis::render(triangles, cam.to_grh(), shader(frame, texture), screen_width / scale, screen_height / scale);
+			window->draw(frame.rgba);
 		}
 
 		// exit with ok
