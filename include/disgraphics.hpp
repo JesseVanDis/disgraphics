@@ -109,15 +109,47 @@ namespace dis
 		{v.fov} 			-> floating_point;
 	};
 
-	template<typename T>
-	concept draw_horizontal_line_ctx = requires(T v)
+	//template<typename T>
+	//concept draw_horizontal_line_ctx = requires(T v)
+	//{
+		//{v.buffer_width} 	-> unsigned_integral;
+		//{v.buffer_height} 	-> unsigned_integral;
+		//{v.px_y} 			-> unsigned_integral;
+		//{v.px_x_begin} 		-> unsigned_integral;
+		//{v.line_length_px} 	-> unsigned_integral;
+	//};
+
+	namespace detail
 	{
-		{v.buffer_width} 	-> unsigned_integral;
-		{v.buffer_height} 	-> unsigned_integral;
-		{v.px_y} 			-> unsigned_integral;
-		{v.px_x_from} 		-> unsigned_integral;
-		{v.line_length_px} 	-> unsigned_integral;
+		template<typename depth_t, typename px_index_t>
+		struct base_fragment_vars
+		{
+			using user_t = std::nullptr_t;
+
+			depth_t 	depth;
+			px_index_t 	px_index;
+		};
+
+		template<typename depth_t, typename px_index_t, typename user_vars_t>
+		struct base_fragment_vars_with_user : user_vars_t
+		{
+			using user_t = user_vars_t;
+
+			depth_t 	depth;
+			px_index_t 	px_index;
+		};
+	}
+
+	template<typename T>
+	concept fragment_vars = requires(T v)
+	{
+		{v.depth} 			-> floating_point;
+		{v.px_index} 		-> unsigned_integral;
 	};
+
+	template<typename UserVars = std::nullptr_t>
+	using frag_vars = std::conditional_t<std::is_same_v<UserVars, std::nullptr_t>, detail::base_fragment_vars<float, uint32_t>, detail::base_fragment_vars_with_user<float, uint32_t, UserVars>>;
+	static_assert(fragment_vars<frag_vars<>>);
 }
 
 namespace dis::helpers
@@ -193,36 +225,50 @@ namespace dish = dis::helpers;
 
 namespace dis
 {
-
-	struct draw_hline_ctx
+	template<typename user_defined_iterators_t>
+	struct draw_ctx
 	{
-		uint32_t buffer_width;
-		uint32_t buffer_height;
-		uint32_t px_y, px_x_from, line_length_px;
+		float 						one_over_z    = 0;
+		float 						one_over_z_it = 0;
+		user_defined_iterators_t 	vertex;
+		user_defined_iterators_t 	vertex_it;
 	};
+
+	namespace detail
+	{
+		template<typename draw_ctx_t>
+		using user_defined_iterators_from_draw_ctx = std::decay_t<decltype(std::declval<draw_ctx_t>().vertex)>;
+
+		template<typename shader_t, typename triangle_t>
+		using user_defined_iterators_from_shader = std::decay_t<decltype(std::declval<shader_t>().vertex(std::declval<vertex_from_tri_t<triangle_t>>()))>;
+
+	}
 
 	namespace detail::concepts
 	{
-		struct draw_horizontal_line_ctx_example
+		template<typename shader_t, typename triangle_t>
+		concept shader_scanline = requires(shader_t v)
 		{
-			uint32_t buffer_width;
-			uint32_t buffer_height;
-			uint32_t px_y, px_x_from, line_length_px;
+			{v.vertex(std::declval<vertex_from_tri_t<triangle_t>>())} -> std::same_as<detail::user_defined_iterators_from_shader<shader_t, triangle_t>>;
+			{v.scanline(std::declval<triangle_t>(), std::declval<draw_ctx<detail::user_defined_iterators_from_shader<shader_t, triangle_t>>>())};
 		};
-		static_assert(draw_horizontal_line_ctx<draw_horizontal_line_ctx_example>);
+
+		template<typename shader_t, typename triangle_t>
+		concept shader_fragment = requires(shader_t v)
+		{
+			{v.vertex(std::declval<vertex_from_tri_t<triangle_t>>())} -> std::same_as<detail::user_defined_iterators_from_shader<shader_t, triangle_t>>;
+			{v.fragment(std::declval<triangle_t>(), std::declval<frag_vars<detail::user_defined_iterators_from_shader<shader_t, triangle_t>>>())};
+		};
 	}
 
-	template<typename FuncT, typename draw_ctx_t, typename triangle_t>
-	concept draw_horizontal_line_function = requires(FuncT v)
-	{
-		{v(std::declval<triangle_t>(), std::declval<draw_ctx_t>())};
-	};
-
-	template<draw_horizontal_line_ctx draw_ctx_t, triangle_list triangle_list_t>
-	constexpr void 	render(const triangle_list_t& triangles, const camera auto& camera, draw_horizontal_line_function<draw_ctx_t, triangle_from_list_t<triangle_list_t>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height);
+	template<typename shader_t, typename triangle_t>
+	concept shader = detail::concepts::shader_scanline<shader_t, triangle_t> || detail::concepts::shader_fragment<shader_t, triangle_t>;
 
 	template<triangle_list triangle_list_t>
-	constexpr void 	render_nonshaded(const triangle_list_t& triangles, const camera auto& camera, draw_horizontal_line_function<draw_hline_ctx, triangle_from_list_t<triangle_list_t>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height);
+	constexpr void 	render(const triangle_list_t& triangles, const camera auto& camera, shader<triangle_from_list_t<triangle_list_t>> auto&& shader, unsigned_integral auto frame_width, unsigned_integral auto frame_height);
+
+	//template<triangle_list triangle_list_t>
+	//constexpr void 	render_nonshaded(const triangle_list_t& triangles, const camera auto& camera, unsigned_integral auto frame_width, unsigned_integral auto frame_height);
 }
 
 namespace dis::helpers
@@ -245,22 +291,116 @@ namespace dis
 	namespace detail
 	{
 		template<typename T>
-		concept line_custom_iterable = requires(T v)
+		concept line_custom_iterable_trough_foreach = requires(T v)
+		{
+			std::decay_t<T>::template get_field<0>(v) = {};
+		};
+
+		template<typename T>
+		concept line_custom_iterable_trough_operators = requires(T v)
 		{
 			{v += v}  -> std::same_as<T&>;
 		};
 
-		template<typename vertex_t, typename T>
-		concept can_assign_vertex = requires(T v)
-		{
-			{v = std::declval<vertex_t>()} -> std::same_as<T&>;
-		};
+		template<typename T>
+		concept line_custom_iterable = line_custom_iterable_trough_operators<T> || line_custom_iterable_trough_foreach<T>;
+
+		//template<typename vertex_t, typename T>
+		//concept can_assign_vertex = requires(T v)
+		//{
+		//	{v = std::declval<vertex_t>()} -> std::same_as<T&>;
+		//};
 
 		template<typename draw_ctx_t>
 		concept has_user_defined_iterators = requires(draw_ctx_t v)
 		{
-			{v.begin} -> line_custom_iterable;
+			{v.vertex} -> line_custom_iterable;
 		};
+
+		template<typename T>
+		struct ops_rref
+		{
+			explicit ops_rref(const T& v) : v(v){}
+			inline T operator * (const auto& other) const;
+			inline T operator + (const auto& other) const;
+			inline T operator - (const auto& other) const;
+			const T& v;
+		};
+
+		template<typename T>
+		struct ops_lref
+		{
+			explicit ops_lref(T& v) : v(v){}
+			inline T& operator *= (const auto& other);
+			inline T& operator += (const auto& other);
+			inline T& operator -= (const auto& other);
+			inline T operator  *  (const auto& other) const;
+			inline T operator  +  (const auto& other) const;
+			inline T operator  -  (const auto& other) const;
+			T& v;
+		};
+
+		template<typename T>
+		inline T& ops_lref<T>::operator *= (const auto& other)
+		{
+			if constexpr(line_custom_iterable_trough_foreach<T>) 	{ dish::for_each_field(v, other, [](auto& a, const auto& b){ a *= b;}); }
+			else 													{ return v *= other; }
+			return v;
+		}
+
+		template<typename T>
+		inline T& ops_lref<T>::operator += (const auto& other)
+		{
+			if constexpr(line_custom_iterable_trough_foreach<T>)	{ dish::for_each_field(v, other, [](auto& a, const auto& b){ a += b;}); }
+			else													{ return v += other; }
+			return v;
+		}
+
+		template<typename T>
+		inline T& ops_lref<T>::operator -= (const auto& other)
+		{
+			if constexpr(line_custom_iterable_trough_foreach<T>)	{ dish::for_each_field(v, other, [](auto& a, const auto& b){ a -= b;}); }
+			else if constexpr (requires{v -= other;})				{ return v -= other; }
+			else 													{ line_custom_iterable auto temp = other; temp *= -1.0; return v += temp; }
+			return v;
+		}
+
+		template<typename T>	inline T ops_lref<T>::operator * (const auto& other) const { return ops_rref(v) * other; }
+		template<typename T>	inline T ops_lref<T>::operator + (const auto& other) const { return ops_rref(v) + other; }
+		template<typename T>	inline T ops_lref<T>::operator - (const auto& other) const { return ops_rref(v) - other; }
+
+		template<typename T>
+		inline T ops_rref<T>::operator * (const auto& other) const
+		{
+			if constexpr(requires{v * other;}) 	{ return v * other; }
+			else 								{ T t = v; ops_lref(t) *= other; return t; }
+		}
+
+		template<typename T>
+		inline T ops_rref<T>::operator + (const auto& other) const
+		{
+			if constexpr(requires{v + other;}) 	{ return v + other; }
+			else 								{ T t = v; ops_lref(t) += other; return t; }
+		}
+
+		template<typename T>
+		inline T ops_rref<T>::operator - (const auto& other) const
+		{
+			if constexpr(requires{v * other;}) 	{ return v - other; }
+			else 								{ T t = v; ops_lref(t) -= other; return t; }
+		}
+
+		template<typename T>
+		auto ops(T& v)
+		{
+			return ops_lref(v);
+		}
+
+		template<typename T>
+		auto ops(const T& v)
+		{
+			return ops_rref(v);
+		}
 
 		template<typename user_defined_iterators_t>
 		struct screen_space_clipped_pt
@@ -271,49 +411,49 @@ namespace dis
 
 			screen_space_clipped_pt& operator -= (const screen_space_clipped_pt& other)
 			{
-				screen_pos.x -= other.screen_pos.x;
-				screen_pos.y -= other.screen_pos.y;
-				screen_pos.z -= other.screen_pos.z;
-				view_pos.x   -= other.view_pos.x;
-				view_pos.y   -= other.view_pos.y;
-				view_pos.z   -= other.view_pos.z;
-				user_defined -= other.user_defined;
+				screen_pos.x 		-= other.screen_pos.x;
+				screen_pos.y 		-= other.screen_pos.y;
+				screen_pos.z 		-= other.screen_pos.z;
+				view_pos.x   		-= other.view_pos.x;
+				view_pos.y   		-= other.view_pos.y;
+				view_pos.z   		-= other.view_pos.z;
+				ops(user_defined) 	-= other.user_defined;
 				return *this;
 			}
 
 			screen_space_clipped_pt& operator += (const screen_space_clipped_pt& other)
 			{
-				screen_pos.x += other.screen_pos.x;
-				screen_pos.y += other.screen_pos.y;
-				screen_pos.z += other.screen_pos.z;
-				view_pos.x   += other.view_pos.x;
-				view_pos.y   += other.view_pos.y;
-				view_pos.z   += other.view_pos.z;
-				user_defined += other.user_defined;
+				screen_pos.x 		+= other.screen_pos.x;
+				screen_pos.y 		+= other.screen_pos.y;
+				screen_pos.z 		+= other.screen_pos.z;
+				view_pos.x   		+= other.view_pos.x;
+				view_pos.y   		+= other.view_pos.y;
+				view_pos.z   		+= other.view_pos.z;
+				ops(user_defined) 	+= other.user_defined;
 				return *this;
 			}
 
 			screen_space_clipped_pt& operator *= (const screen_space_clipped_pt& other)
 			{
-				screen_pos.x *= other.screen_pos.x;
-				screen_pos.y *= other.screen_pos.y;
-				screen_pos.z *= other.screen_pos.z;
-				view_pos.x   *= other.view_pos.x;
-				view_pos.y   *= other.view_pos.y;
-				view_pos.z   *= other.view_pos.z;
-				user_defined *= other.user_defined;
+				screen_pos.x 		*= other.screen_pos.x;
+				screen_pos.y 		*= other.screen_pos.y;
+				screen_pos.z 		*= other.screen_pos.z;
+				view_pos.x   		*= other.view_pos.x;
+				view_pos.y   		*= other.view_pos.y;
+				view_pos.z   		*= other.view_pos.z;
+				ops(user_defined) 	*= other.user_defined;
 				return *this;
 			}
 
 			screen_space_clipped_pt& operator *= (floating_point auto v)
 			{
-				screen_pos.x *= v;
-				screen_pos.y *= v;
-				screen_pos.z *= v;
-				view_pos.x *= v;
-				view_pos.y *= v;
-				view_pos.z *= v;
-				user_defined *= v;
+				screen_pos.x    	*= v;
+				screen_pos.y    	*= v;
+				screen_pos.z    	*= v;
+				view_pos.x      	*= v;
+				view_pos.y      	*= v;
+				view_pos.z      	*= v;
+				ops(user_defined) 	*= v;
 				return *this;
 			}
 
@@ -401,7 +541,7 @@ namespace dis
 			{
 				increment_base();
 				one_over_z += one_over_z_it;
-				user_defined += user_defined_it;
+				ops(user_defined) += user_defined_it;
 			}
 
 			void set(const screen_space_clipped_pt<user_defined_iterators_t>& p0, const screen_space_clipped_pt<user_defined_iterators_t>& p1)
@@ -411,16 +551,17 @@ namespace dis
 				// begin and end values
 				const flt_t one_over_z_start	= flt_t(1) / p0.view_pos.z;
 				const flt_t one_over_z_end 		= flt_t(1) / p1.view_pos.z;
-				const auto 	one_over_uv_start	= p0.user_defined * one_over_z_start;
-				const auto 	one_over_uv_end		= p1.user_defined * one_over_z_end;
+
+				const auto 	one_over_uv_start	= ops(p0.user_defined) * one_over_z_start;
+				const auto 	one_over_uv_end		= ops(p1.user_defined) * one_over_z_end;
 
 				// set iterators
-				one_over_z_it   = (one_over_z_end  - one_over_z_start ) * c.one_over_height_ceiled;
-				user_defined_it = (one_over_uv_end - one_over_uv_start) * c.one_over_height_ceiled;
+				one_over_z_it   = ops(ops(one_over_z_end ) - one_over_z_start ) * c.one_over_height_ceiled;
+				user_defined_it = ops(ops(one_over_uv_end) - one_over_uv_start) * c.one_over_height_ceiled;
 
 				// sub pixel
-				one_over_z   = one_over_z_start  + (one_over_z_it   * c.sub_pixel);
-				user_defined = one_over_uv_start + (user_defined_it * c.sub_pixel);
+				one_over_z   = ops(one_over_z_start ) + (ops(one_over_z_it)   * c.sub_pixel);
+				user_defined = ops(one_over_uv_start) + (ops(user_defined_it) * c.sub_pixel);
 			}
 		};
 
@@ -441,37 +582,36 @@ namespace dis
 		template<typename VecA, typename VecB>
 		using smallest_vec3_t = std::conditional_t<sizeof(VecA) < sizeof(VecB), VecA, VecB>;
 
-		template<draw_horizontal_line_ctx draw_ctx_t>
-		inline constexpr void check_context_validity(draw_ctx_t& ctx)
+		inline constexpr void check_context_validity(auto& px_y, auto& px_x_begin, auto& line_length_px, auto buffer_width, auto buffer_height)
 		{
 #if 0
-			int to = ctx.px_x_from + ctx.line_length_px;
-			assert(to 				>= ctx.px_x_from);
-			assert(ctx.px_y 		< ctx.buffer_height);
-			assert(ctx.px_x_from 	< ctx.buffer_width);
+			int to = px_x_begin + line_length_px;
+			assert(to 				>= px_x_begin);
+			assert(px_y 		< ctx.buffer_height);
+			assert(px_x_begin 	< ctx.buffer_width);
 			assert(to				< ctx.buffer_width);
-			assert(ctx.line_length_px	< 100000);
+			assert(line_length_px	< 100000);
 #else
-			ctx.px_y 			= std::clamp(ctx.px_y, 		0u, (uint32_t)(ctx.buffer_height-1));
-			ctx.px_x_from 		= std::clamp(ctx.px_x_from, 0u, (uint32_t)(ctx.buffer_width-1));
-			int to = std::clamp(ctx.px_x_from + ctx.line_length_px, 0u, (uint32_t)(ctx.buffer_width-1));
-			if(to <= ctx.px_x_from || (to <= ctx.px_x_from) || ctx.line_length_px > 100000)
+			px_y 			= std::clamp(px_y, 		0u, (uint32_t)(buffer_height-1));
+			px_x_begin   	= std::clamp(px_x_begin, 0u, (uint32_t)(buffer_width-1));
+			int to = std::clamp(px_x_begin + line_length_px, 0u, (uint32_t)(buffer_width-1));
+			if(to <= px_x_begin || line_length_px > 100000)
 			{
-				ctx.line_length_px = 0;
+				line_length_px = 0;
 			}
 			else
 			{
-				ctx.line_length_px = to - ctx.px_x_from;
+				line_length_px = to - px_x_begin;
 			}
 
-			//ctx.px_y 			= std::min(ctx.px_y, (ctx.buffer_height-1));
-			//ctx.px_x_from 		= std::min(ctx.px_x_from, (ctx.buffer_width-1));
-			//ctx.line_length_px 	= (ctx.px_x_from + ctx.line_length_px) > (ctx.buffer_width-1) ? ((ctx.buffer_width-1) - ctx.px_x_from) : ctx.line_length_px;
+			//px_y 					= std::min(px_y, (ctx.buffer_height-1));
+			//px_x_begin 		= std::min(px_x_begin, (ctx.buffer_width-1));
+			//line_length_px 	= (px_x_begin + line_length_px) > (ctx.buffer_width-1) ? ((ctx.buffer_width-1) - px_x_begin) : line_length_px;
 #endif
 		}
 
-		template<draw_horizontal_line_ctx draw_ctx_t, typename user_defined_iterators_t, triangle triangle_t>
-		constexpr inline void it_line(const triangle_t& source_triangle, draw_ctx_t& ctx, int y, line_it<user_defined_iterators_t>& left, line_it<user_defined_iterators_t>& right, draw_horizontal_line_function<draw_ctx_t, triangle_t> auto&& draw_hline_function)
+		template<typename draw_ctx_t, typename user_defined_iterators_t, triangle triangle_t, shader<triangle_t> shader_t>
+		constexpr inline void it_line(const triangle_t& source_triangle, draw_ctx_t& ctx, int y, line_it<user_defined_iterators_t>& left, line_it<user_defined_iterators_t>& right, shader_t&& shader, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 		{
 			using flt_t = line_it<user_defined_iterators_t>::flt_t;
 
@@ -480,18 +620,57 @@ namespace dis
 			const flt_t one_over_width 		= flt_t(1) / width;
 			const flt_t sub_texel 			= (left_x_floored) - left.x;
 
-			ctx.px_y 			= y;
-			ctx.px_x_from 		= static_cast<decltype(ctx.px_x_from)>(left_x_floored);
-			ctx.line_length_px 	= static_cast<int>(right.x) - ctx.px_x_from;
-			ctx.one_over_z_it	= (right.one_over_z - left.one_over_z) * one_over_width;
-			ctx.one_over_z		= left.one_over_z + (ctx.one_over_z_it * sub_texel);
-			ctx.it				= (right.user_defined - left.user_defined) * one_over_width;
-			ctx.begin			= left.user_defined + (ctx.it * sub_texel);
+			uint32_t px_y 			= y;
+			uint32_t px_x_begin 	= static_cast<uint32_t>(left_x_floored); // NOLINT
+			uint32_t line_length_px = static_cast<int>(right.x) - px_x_begin;
+			auto     one_over_z_it	= ops(ops(right.one_over_z)   - left.one_over_z  ) * one_over_width;
+			auto     vertex_it      = ops(ops(right.user_defined) - left.user_defined) * one_over_width;
+			auto     one_over_z		= ops(ops(one_over_z_it) * sub_texel) + left.one_over_z;
+			auto     vertex         = ops(ops(vertex_it)     * sub_texel) + left.user_defined;
+			uint32_t px_index_begin = px_x_begin + px_y * frame_width;
 
-			check_context_validity(ctx);
+			check_context_validity(px_y, px_x_begin, line_length_px, frame_width, frame_height);
 
-			draw_hline_function(source_triangle, ctx);
+			if constexpr(requires{ctx.px_y;})			ctx.px_y 			= px_y;
+			if constexpr(requires{ctx.px_x_begin;})		ctx.px_x_begin 		= px_x_begin;
+			if constexpr(requires{ctx.line_length_px;})	ctx.line_length_px 	= line_length_px;
+			if constexpr(requires{ctx.one_over_z_it;})	ctx.one_over_z_it 	= one_over_z_it;
+			if constexpr(requires{ctx.vertex_it;})		ctx.vertex_it 		= vertex_it;
+			if constexpr(requires{ctx.one_over_z;})		ctx.one_over_z 		= one_over_z;
+			if constexpr(requires{ctx.vertex;})			ctx.vertex 			= vertex;
+			if constexpr(requires{ctx.px_index_begin;})	ctx.px_index_begin 	= px_index_begin;
 
+			constexpr bool is_shader_scanline = detail::concepts::shader_scanline<shader_t, triangle_t>;
+			constexpr bool is_shader_fragment = detail::concepts::shader_fragment<shader_t, triangle_t>;
+			static_assert(is_shader_scanline + is_shader_fragment <= 1); // shader can not both have a 'scanline' AND 'fragment' function.
+
+			if constexpr(is_shader_scanline)
+			{
+				shader.scanline(source_triangle, ctx);
+			}
+			else if constexpr(is_shader_fragment)
+			{
+				// scanline 'wrapper' here then...
+				dis::frag_vars<user_defined_iterators_t> it;
+				it.px_index = px_index_begin;
+				for(size_t i=0; i<line_length_px; i++)
+				{
+					flt_t z = flt_t(1)/one_over_z;
+					it.depth = z;
+					if constexpr(!std::is_same_v<user_defined_iterators_t, std::nullptr_t>)
+					{
+						user_defined_iterators_t& user_vars = it;
+						user_vars = vertex;
+						ops(user_vars) *= z;
+					}
+					shader.fragment(source_triangle, it);
+					ops(vertex) += vertex_it;
+					one_over_z  += one_over_z_it;
+					it.px_index++;
+				}
+			}
+
+			// increment edges
 			left.increment();
 			right.increment();
 		}
@@ -511,12 +690,12 @@ namespace dis
 		}
 
 		/// no bounds checking here!
-		template<draw_horizontal_line_ctx draw_ctx_t, triangle triangle_t, typename user_defined_iterators_t>
-		constexpr void draw_triangle_unsafe(const triangle_t& source_triangle, screen_space_clipped_pt_triangle<user_defined_iterators_t>& triangle, draw_horizontal_line_function<draw_ctx_t, triangle_t> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
+		template<typename draw_ctx_t, triangle triangle_t, typename user_defined_iterators_t>
+		constexpr void draw_triangle_unsafe(const triangle_t& source_triangle, screen_space_clipped_pt_triangle<user_defined_iterators_t>& triangle, shader<triangle_t> auto&& shader, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 		{
-			if constexpr(requires{std::declval<draw_ctx_t>().begin;})
+			if constexpr(requires{std::declval<draw_ctx_t>().vertex;})
 			{
-				static_assert(has_user_defined_iterators<draw_ctx_t>, "'begin' member found in 'draw_ctx_t' but does not satisfy the 'has_user_defined_iterators' conditions");
+				static_assert(has_user_defined_iterators<draw_ctx_t>, "'vertex' member found in 'draw_ctx_t' but does not satisfy the 'has_user_defined_iterators' conditions");
 			}
 
             struct line {const screen_space_clipped_pt<user_defined_iterators_t>& p0, &p1;};
@@ -532,8 +711,8 @@ namespace dis
             float cross_z = (triangle[1].screen_pos.x - triangle[0].screen_pos.x) * (triangle[2].screen_pos.y - triangle[0].screen_pos.y) - (triangle[2].screen_pos.x - triangle[0].screen_pos.x) * (triangle[1].screen_pos.y - triangle[0].screen_pos.y);
 
 			draw_ctx_t ctx; // NOLINT
-			ctx.buffer_width = static_cast<uint32_t>(frame_width);
-			ctx.buffer_height = static_cast<uint32_t>(frame_height);
+			if constexpr(requires{ctx.frame_width;})  ctx.frame_width  = static_cast<decltype(ctx.frame_width)>(frame_width);
+			if constexpr(requires{ctx.frame_height;}) ctx.frame_height = static_cast<decltype(ctx.frame_height)>(frame_height);
 
 			if(cross_z > 0.0f)
 			{
@@ -546,13 +725,13 @@ namespace dis
 				int y=line_it_long.y_start;
 				for(; y<line_it_long.y_start+line_it_top.height; y++)
 				{
-					it_line(source_triangle, ctx, y, line_it_long, line_it_top, draw_hline_function);
+					it_line(source_triangle, ctx, y, line_it_long, line_it_top, shader, frame_width, frame_height);
 				}
 
 				const int yLimit = y_pos_at_intersection(y, line_it_long, line_it_bot);
 				for(; y<yLimit; y++)
 				{
-					it_line(source_triangle, ctx, y, line_it_long, line_it_bot, draw_hline_function);
+					it_line(source_triangle, ctx, y, line_it_long, line_it_bot, shader, frame_width, frame_height);
 				}
 			}
 			else
@@ -566,13 +745,13 @@ namespace dis
 				int y=line_it_long.y_start;
 				for(; y<line_it_long.y_start+line_it_top.height; y++)
 				{
-					it_line(source_triangle, ctx, y, line_it_top, line_it_long, draw_hline_function);
+					it_line(source_triangle, ctx, y, line_it_top, line_it_long, shader, frame_width, frame_height);
 				}
 
 				const int yLimit = y_pos_at_intersection(y, line_it_long, line_it_bot);
 				for(; y<yLimit; y++)
 				{
-					it_line(source_triangle, ctx, y, line_it_bot, line_it_long, draw_hline_function);
+					it_line(source_triangle, ctx, y, line_it_bot, line_it_long, shader, frame_width, frame_height);
 				}
 			}
 		}
@@ -842,8 +1021,8 @@ namespace dis
 			return clip_triangle_ext(tri_in_out, tri_extra_out, detail::clip_triangle::intersect<flt_t>, is_behind_clipping_plane<flt_t>, should_cut_to_quad<flt_t>, plane);
 		}
 
-		template<draw_horizontal_line_ctx draw_ctx_t, triangle triangle_t, typename user_defined_iterators_t, typename viewport_flt_t>
-		constexpr void draw_triangle(const triangle_t& source_triangle, const screen_space_clipped_pt_triangle<user_defined_iterators_t>& triangle, draw_horizontal_line_function<draw_ctx_t, triangle_t> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height, const viewport<viewport_flt_t>& viewport)
+		template<typename draw_ctx_t, triangle triangle_t, typename user_defined_iterators_t, typename viewport_flt_t>
+		constexpr void draw_triangle(const triangle_t& source_triangle, const screen_space_clipped_pt_triangle<user_defined_iterators_t>& triangle, shader<triangle_t> auto&& shader, unsigned_integral auto frame_width, unsigned_integral auto frame_height, const viewport<viewport_flt_t>& viewport)
 		{
 			using clipped_tri = screen_space_clipped_pt_triangle<user_defined_iterators_t>;
 			constexpr auto tris_capacity = (2*2*2*2)+1;
@@ -950,15 +1129,15 @@ namespace dis
 			// draw
 			for(std::uint_fast8_t i=0; i<clipped_tris_num; i++)
 			{
-				draw_triangle_unsafe<draw_ctx_t>(source_triangle, clipped_tris[i], draw_hline_function, frame_width, frame_height);
+				draw_triangle_unsafe<draw_ctx_t>(source_triangle, clipped_tris[i], shader, frame_width, frame_height);
 			}
 		}
 
-		template<draw_horizontal_line_ctx draw_ctx_t, triangle triangle_t, typename user_defined_iterators_t>
-		constexpr void draw_triangle(const triangle_t& source_triangle, const screen_space_clipped_pt_triangle<user_defined_iterators_t>& triangle, draw_horizontal_line_function<draw_ctx_t, triangle_t> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
+		template<typename draw_ctx_t, triangle triangle_t, typename user_defined_iterators_t>
+		constexpr void draw_triangle(const triangle_t& source_triangle, const screen_space_clipped_pt_triangle<user_defined_iterators_t>& triangle, shader<triangle_t> auto&& shader, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 		{
 			viewport<float> viewport{1.0f, 1.0f, (float)(frame_width-1), (float)(frame_height-1)};
-			draw_triangle<draw_ctx_t, triangle_t, user_defined_iterators_t>(source_triangle, triangle, draw_hline_function, frame_width, frame_height, viewport);
+			draw_triangle<draw_ctx_t, triangle_t, user_defined_iterators_t>(source_triangle, triangle, shader, frame_width, frame_height, viewport);
 		}
 
 		constexpr dish::mat4x4 create_perspective(float fovy, float aspect, float z_near, float z_far)
@@ -1008,11 +1187,11 @@ namespace dis
 			return result;
 		}
 
-		template<draw_horizontal_line_ctx draw_ctx_t, triangle_list triangle_list_t>
-		constexpr void render_rasterize(const triangle_list_t& triangles, const camera auto& camera, draw_horizontal_line_function<draw_ctx_t, triangle_from_list_t<triangle_list_t>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
+		template<typename draw_ctx_t, triangle_list triangle_list_t>
+		constexpr void render_rasterize(const triangle_list_t& triangles, const camera auto& camera, shader<triangle_from_list_t<triangle_list_t>> auto&& shader, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 		{
 			using triangle_t 				= std::decay_t<decltype(*triangles.begin())>;
-			using user_defined_iterators_t 	= std::conditional_t<has_user_defined_iterators<draw_ctx_t>, std::decay_t<decltype(std::declval<draw_ctx_t>().begin)>, std::nullptr_t>;
+			using user_defined_iterators_t 	= std::conditional_t<has_user_defined_iterators<draw_ctx_t>, std::decay_t<decltype(std::declval<draw_ctx_t>().vertex)>, std::nullptr_t>;
 			using clipped_tri_t 			= screen_space_clipped_pt_triangle<user_defined_iterators_t>;
 
 			const float target_width_flt 	= static_cast<float>(frame_width);  // NOLINT
@@ -1039,9 +1218,9 @@ namespace dis
 				const auto& vertex1 = get_tri_pt<1>(tri);
 				const auto& vertex2 = get_tri_pt<2>(tri);
 
-				clipped_tris[0][0].user_defined = vertex0;
-				clipped_tris[0][1].user_defined = vertex1;
-				clipped_tris[0][2].user_defined = vertex2;
+				clipped_tris[0][0].user_defined = shader.vertex(vertex0);
+				clipped_tris[0][1].user_defined = shader.vertex(vertex1);
+				clipped_tris[0][2].user_defined = shader.vertex(vertex2);
 				clipped_tris[0][0].screen_pos = {vertex0.x, vertex0.y, vertex0.z};
 				clipped_tris[0][1].screen_pos = {vertex1.x, vertex1.y, vertex1.z};
 				clipped_tris[0][2].screen_pos = {vertex2.x, vertex2.y, vertex2.z};
@@ -1109,54 +1288,41 @@ namespace dis
 					clipped_tri[2].view_pos.y = p2_view.y;
 					clipped_tri[2].view_pos.z = p2_view.z;
 
-					//clipped_tri[0].screen_pos.z = p0_view.z;
-					//clipped_tri[1].screen_pos.z = p1_view.z;
-					//clipped_tri[2].screen_pos.z = p2_view.z;
-
-					/*
-					clipped_tri[0].screen_pos.x = p0_test.x;
-					clipped_tri[0].screen_pos.y = p0_test.y;
-					clipped_tri[0].screen_pos.z = p0_test.z;
-					clipped_tri[1].screen_pos.x = p1_test.x;
-					clipped_tri[1].screen_pos.y = p1_test.y;
-					clipped_tri[1].screen_pos.z = p1_test.z;
-					clipped_tri[2].screen_pos.x = p2_test.x;
-					clipped_tri[2].screen_pos.y = p2_test.y;
-					clipped_tri[2].screen_pos.z = p2_test.z;
-					 */
-
 					const floating_point auto cross_z = (clipped_tri[1].screen_pos.x - clipped_tri[0].screen_pos.x) * (clipped_tri[2].screen_pos.y - clipped_tri[0].screen_pos.y) - (clipped_tri[2].screen_pos.x - clipped_tri[0].screen_pos.x) * (clipped_tri[1].screen_pos.y - clipped_tri[0].screen_pos.y);
 					const bool backface_culling = cross_z > 0;
 
 					if(backface_culling)
 					{
-						draw_triangle<draw_ctx_t, triangle_t, user_defined_iterators_t>(tri, clipped_tri, draw_hline_function, frame_width, frame_height);
+						draw_triangle<draw_ctx_t, triangle_t, user_defined_iterators_t>(tri, clipped_tri, shader, frame_width, frame_height);
 					}
 				}
 			}
 		}
 	}
 
-	template<draw_horizontal_line_ctx draw_ctx_t, triangle_list triangle_list_t>
-	constexpr void render(const triangle_list_t& triangles, const camera auto& camera, draw_horizontal_line_function<draw_ctx_t, triangle_from_list_t<triangle_list_t>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
+	template<triangle_list triangle_list_t>
+	constexpr void render(const triangle_list_t& triangles, const camera auto& camera, shader<triangle_from_list_t<triangle_list_t>> auto&& shader, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
 	{
+		using shader_t 					= std::decay_t<decltype(shader)>;
 		using triangle_t 				= triangle_from_list_t<triangle_list_t>;
 		using vertex_t					= vertex_from_tri_t<triangle_t>;
-		if constexpr(requires{std::declval<draw_ctx_t>().begin;})
+		using draw_ctx_t 				= draw_ctx<detail::user_defined_iterators_from_shader<shader_t, triangle_t>>;
+
+		if constexpr(requires{std::declval<draw_ctx_t>().vertex;})
 		{
-			using user_defined_iterators_t = std::decay_t<decltype(std::declval<draw_ctx_t>().begin)>;
-			static_assert(detail::can_assign_vertex<vertex_t, user_defined_iterators_t>, 	"'begin' member found in 'draw_ctx_t' but cannot assign a tri to it");
-			static_assert(detail::has_user_defined_iterators<draw_ctx_t>, 					"'begin' member found in 'draw_ctx_t' but does not satisfy the 'has_user_defined_iterators' conditions");
+			//using user_defined_iterators_t = detail::user_defined_iterators_from_draw_ctx<draw_ctx_t>;
+			//static_assert(detail::can_assign_vertex<vertex_t, user_defined_iterators_t>, 	"'vertex' member found in 'draw_ctx_t' but cannot assign a tri to it");
+			static_assert(detail::has_user_defined_iterators<draw_ctx_t>, 					"'vertex' member found in 'draw_ctx_t' but does not satisfy the 'has_user_defined_iterators' conditions");
 		}
 
-		detail::render_rasterize<draw_ctx_t>(triangles, camera, draw_hline_function, frame_width, frame_height);
+		detail::render_rasterize<draw_ctx_t>(triangles, camera, shader, frame_width, frame_height);
 	}
 
-	template<triangle_list triangle_list_t>
-	constexpr void render_nonshaded(const triangle_list_t& triangles, const camera auto& camera, draw_horizontal_line_function<draw_hline_ctx, triangle_from_list_t<triangle_list_t>> auto&& draw_hline_function, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
-	{
-		render<draw_hline_ctx, triangle_list_t>(triangles, camera, draw_hline_function, frame_width, frame_height);
-	}
+	//template<triangle_list triangle_list_t>
+	//constexpr void render_nonshaded(const triangle_list_t& triangles, const camera auto& camera, unsigned_integral auto frame_width, unsigned_integral auto frame_height)
+	//{
+		//render<draw_hline_ctx, triangle_list_t>(triangles, camera, shader, frame_width, frame_height);
+	//}
 
 	namespace helpers
 	{
